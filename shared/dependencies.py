@@ -1,8 +1,10 @@
 """Per-run mock services; no HTTP clients, credentials, or global singletons."""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any
 
 from .logging_util import log
+from .runtime import ToolRuntime
 from .tools_mock import get_weather, validate_city
 
 
@@ -24,13 +26,13 @@ class WeatherClient:
 @dataclass
 class AppDeps:
     weather: WeatherClient = field(default_factory=WeatherClient)
-    runtime: Any = field(default=None, repr=False)
+    runtime: ToolRuntime | None = field(default=None, repr=False)
 
     @classmethod
-    def for_runtime(cls, runtime):
+    def for_runtime(cls, runtime: ToolRuntime) -> AppDeps:
         return cls(weather=runtime.weather_client, runtime=runtime)
 
-    def require_runtime(self):
+    def require_runtime(self) -> ToolRuntime:
         if self.runtime is None:
             raise RuntimeError("This tool requires an injected approval runtime")
         return self.runtime

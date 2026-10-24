@@ -7,6 +7,14 @@ The weather tool takes `ctx: RunContextWrapper[AppDeps]` as its first parameter.
 `Runner.run(..., context=deps)` supplies the object. The wrapper is hidden from the
 model-visible tool schema. There is no captured/global weather singleton.
 
+Shared `AppDeps.runtime` uses the concrete `ToolRuntime | None` type rather than
+`Any`, so type checkers can validate weather and approval method calls.
+`for_runtime(runtime: ToolRuntime) -> AppDeps` binds the services, and
+`require_runtime() -> ToolRuntime` checks and narrows the optional runtime.
+Postponed annotations and a delayed default-client import in `ToolRuntime` avoid
+the circular import while keeping `AppDeps` annotations resolvable at runtime.
+This applies to both beginner dependencies and advanced HITL context.
+
 ```python
 deps = AppDeps(weather=WeatherClient(cache={"Beijing": "Injected weather (mock)."}))
 result = await Runner.run(agent, "Beijing weather?", context=deps)

@@ -7,6 +7,14 @@ The beginner keeps `create_agent` and adds `context_schema=AppDeps`. The tool's
 from model-visible arguments. `runtime.context.read_weather(city)` delegates to
 `deps.weather.get(city)`. Supply a separate object to each invocation:
 
+Shared `AppDeps.runtime` uses the concrete `ToolRuntime | None` type rather than
+`Any`, so type checkers can validate weather and approval method calls.
+`for_runtime(runtime: ToolRuntime) -> AppDeps` binds the services, and
+`require_runtime() -> ToolRuntime` checks and narrows the optional runtime.
+Postponed annotations and a delayed default-client import in `ToolRuntime` avoid
+the circular import while keeping `AppDeps` annotations resolvable at runtime.
+This applies to both beginner dependencies and advanced HITL context.
+
 ```python
 deps = AppDeps(weather=WeatherClient(cache={"Beijing": "Injected weather (mock)."}))
 result = agent.invoke({"messages": [{"role": "user", "content": "Beijing weather?"}]},

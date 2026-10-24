@@ -1,17 +1,27 @@
 """Application policy and local mock receipt ledger, separate from framework history."""
+from __future__ import annotations
+
 from dataclasses import asdict
 import json
 from pathlib import Path
 import sqlite3
+from typing import TYPE_CHECKING
 
 from .hitl import ApprovalRequest, Decision
-from .dependencies import WeatherClient
 from .logging_util import log
 from .tools_mock import RISK, book_flight, validate_city
 
+if TYPE_CHECKING:
+    from .dependencies import WeatherClient
+
 
 class ToolRuntime:
-    def __init__(self, directory: Path, operation_id: str, city: str, role="traveler", weather=None):
+    def __init__(self, directory: Path, operation_id: str, city: str,
+                 role: str = "traveler", weather: WeatherClient | None = None) -> None:
+        # AppDeps imports ToolRuntime for runtime annotation resolution (e.g. Pydantic).
+        # Import the default client here to keep that dependency cycle safe.
+        from .dependencies import WeatherClient
+
         self.directory, self.operation_id = Path(directory), operation_id
         self.weather_client = weather if weather is not None else WeatherClient()
         self.city, self.role = validate_city(city), role
@@ -94,7 +104,7 @@ class ToolRuntime:
                        (self.operation_id,))
         log("approval", operation_id=self.operation_id, status="retry-new-attempt")
 
-    def weather(self, city: str, client=None) -> str:
+    def weather(self, city: str, client: WeatherClient | None = None) -> str:
         self.authorize("get_weather")
         log("tool.call", tool="get_weather", city=city)
         log("approval", tool="get_weather", status="approved", reason="Low-risk allowlist")

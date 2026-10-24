@@ -7,6 +7,14 @@ Each instance receives `deps: AppDeps` through its constructor/model field, mark
 `Field(exclude=True)` so service objects are not serialized. `_run` reads `self.deps`;
 weather delegates to the injected `weather.get(city)` mock.
 
+Shared `AppDeps.runtime` uses the concrete `ToolRuntime | None` type rather than
+`Any`, so type checkers can validate weather and approval method calls.
+`for_runtime(runtime: ToolRuntime) -> AppDeps` binds the services, and
+`require_runtime() -> ToolRuntime` checks and narrows the optional runtime.
+Postponed annotations and a delayed default-client import in `ToolRuntime` avoid
+the circular import while keeping `AppDeps` annotations resolvable at runtime.
+This applies to both beginner dependencies and advanced HITL context.
+
 ```python
 deps = AppDeps(weather=WeatherClient(cache={"Beijing": "Injected weather (mock)."}))
 weather_tool = WeatherTool(deps=deps)
