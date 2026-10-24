@@ -167,14 +167,15 @@ also appear):
 ```
 
 The final wording is model-generated and can vary. Pydantic AI additionally
-prints `[structured]` with the validated final object. A missing tool call raises
-an error instead of reporting success. Prompts request the call; the post-run
-check detects violations. These checks are not an authorization boundary.
+prints `[structured]` with the validated final object. The LangChain beginner
+uses `create_agent` and lets the model choose tools or a direct reply. Other
+beginner demos retain their weather-call checks; these are not authorization boundaries.
 
 Missing credentials stop execution with a setup message. Authentication, quota,
 connectivity, or model-access errors require fixing the relevant environment
-setting or account. A model override should support tool calling. LangGraph uses explicit conditional
-edges and a recursion limit around its model/tool loop.
+setting or account. A model override should support tool calling. The LangChain
+`create_agent` factory owns the beginner loop; its recursion limit bounds execution.
+The separate advanced LangGraph workflow still demonstrates explicit approval branches.
 The Agents SDK uses its Chat Completions adapter for provider compatibility.
 Pydantic AI validates final output locally and disables DeepSeek thinking mode
 to allow its output-tool selection; server-side strict tool schemas are disabled.
@@ -186,7 +187,7 @@ External tracing is opt-in for CrewAI/SDK; advanced structured logs work offline
 | --- | --- |
 | 0:00–0:20 | Configure the environment; run all four examples |
 | 0:20–1:00 | CrewAI: follow Researcher → Task context → Writer |
-| 1:00–1:40 | LangGraph: follow conditional edges and native graph checkpoints |
+| 1:00–1:40 | LangChain create_agent first; then native LangGraph approval checkpoints |
 | 1:40–2:20 | Pydantic AI: inspect tool schema and validated final output |
 | 2:20–3:00 | Agents SDK: inspect Runner, guardrail, and session history |
 | 3:00–4:00 | Change a city, try a rejected input, inspect state, review the comparison |
@@ -196,7 +197,7 @@ External tracing is opt-in for CrewAI/SDK; advanced structured logs work offline
 | Project | Abstractions to locate | Loop observation | State observation | Go harness notes |
 | --- | --- | --- | --- | --- |
 | [CrewAI](crewai/README.md) | Agent / Task / Crew | Crew task/agent loop | Task outputs + work item | App-owned policy and replay |
-| [LangGraph](langgraph/README.md) | StateGraph / ToolNode / interrupt | Explicit nodes and conditional edges | SQLite graph state | Native interrupt; app-owned effect policy |
+| [LangChain / LangGraph](langgraph/README.md) | create_agent / tools / checkpointer | Factory-owned beginner loop | In-memory thread; advanced SQLite state | Advanced native interrupt and effect policy |
 | [Pydantic AI](pydantic_ai/README.md) | Agent / tool / output model | Agent graph | Typed history + deferred IDs | Typed approval protocol |
 | [OpenAI Agents SDK](openai_agents/README.md) | Agent / Runner / session / guardrail | Runner + handoff | SQLiteSession + RunState | Native interruption protocol |
 

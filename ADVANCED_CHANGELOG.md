@@ -1,5 +1,21 @@
 # Advanced harness changelog
 
+## Latest increment: use create_agent for the beginner weather assistant
+
+- Replaced the manual StateGraph / ToolNode / tools_condition ReAct loop in
+  `langgraph/main.py` with `langchain.agents.create_agent(model, tools, system_prompt)`.
+- Removed forced tool choice and the post-run tool-call requirement. The model may
+  call weather tools or answer directly. InMemorySaver and thread_id retain turns
+  for the lifetime of the same agent process.
+- Deleted the old beginner graph implementation. The independent advanced approval
+  graph is retained because its custom interrupt/recovery lesson is outside this change.
+- Added langchain 1.4.7 to the isolated uv project, retaining existing framework versions.
+- Two beginner tests cover invoke/ToolMessage, follow-up history, and a direct reply.
+- LangGraph regression: **11 passed, 1 skipped**; dependency compatibility checks passed.
+- Live DeepSeek verification called get_weather for Beijing without forced selection.
+- Run: `cd langgraph && uv run main.py "What is the weather in Beijing?"`.
+- Tests: `cd langgraph && uv run pytest`.
+
 ## Current increment plan (recorded before implementation)
 
 1. Replace AutoGen with an isolated LangGraph uv project while retaining the other three frameworks.

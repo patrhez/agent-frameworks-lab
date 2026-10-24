@@ -1,12 +1,36 @@
-# LangGraph weather and approval graphs
+# LangChain weather agent and LangGraph approval workflow
 
 ## Five-line concept map
 
-1. **StateGraph** defines nodes and edges; `compile()` creates the runnable graph.
-2. **MessagesState** accumulates chat messages through the built-in message reducer.
-3. **ToolNode** dispatches typed LangChain tools and returns correlated ToolMessages.
-4. **Conditional edges** choose tools, approval, execution/rejection, and termination.
-5. **Checkpointer / interrupt / Command** save pending work and resume the same thread.
+1. **create_agent** builds the beginner agent from a model, tools, and a system prompt.
+2. **Chat model** decides whether to request a tool or answer directly.
+3. **Tool / ToolMessage** expose the weather function and record its result in history.
+4. **InMemorySaver / thread_id** retain multiple turns within the same agent process.
+5. **interrupt / Command** provide the separate advanced workflow's approval boundary.
+
+## Beginner: create_agent
+
+The core construction in `main.py` is:
+
+```python
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+agent = create_agent(
+    model=model,
+    tools=[get_weather],
+    system_prompt="Use get_weather for city weather and identify mock data.",
+    checkpointer=InMemorySaver(),
+)
+config = {"configurable": {"thread_id": "weather-demo"}}
+result = agent.invoke({"messages": [{"role": "user", "content": "Beijing weather?"}]}, config)
+```
+
+The configured model and weather function are defined in the runnable `main.py`.
+The agent is still a **CompiledStateGraph** underneath; ordinary agent loops do
+not need hand-written nodes or edges. The factory owns the model/tool loop.
+Reuse the same agent and `thread_id` for follow-up `invoke` calls. In-memory
+history lasts only for that agent process; separate CLI runs start fresh.
 
 ## Run: beginner -> advanced
 
@@ -26,7 +50,9 @@ uv run python -m advanced.run --phase resume --state-dir .local-data/persisted
 uv run pytest
 ```
 
-The beginner model must call `get_weather` before its final natural-language answer.
+The beginner model chooses tool use itself; weather questions are guided by the
+system prompt, while greetings can receive direct replies. No forced tool choice
+or post-run requirement to call a tool is used.
 It loads provider settings through `shared.providers`: environment/root `.env`
 first, then literal DeepSeek settings in `~/.zshrc` when no key is configured.
 No OpenAI key or manual export is required for those existing DeepSeek assignments.
@@ -51,14 +77,15 @@ RUN_LIVE=1 uv run python -m advanced.run --live --state-dir .local-data/live
 
 Only the opt-in live path spends tokens. It performs several model requests;
 allow roughly 10–120 seconds depending on provider latency. Booking is always mock.
-DeepSeek thinking is disabled to support required/named tool choice. The beginner
-and advanced live smoke have both been verified with the configured DeepSeek model.
+The model client retains its DeepSeek compatibility settings. The beginner sets
+no tool choice; named tool selection belongs only to the separate advanced workflow.
+The create_agent beginner and advanced live smoke have been verified with DeepSeek.
 
 ## Module map and reading order
 
 | File / symbol | Responsibility |
 | --- | --- |
-| `main.py:build_graph` | Short model -> ToolNode -> model loop with conditional termination |
+| `main.py:build_agent` | Official create_agent factory with weather tool and in-memory history |
 | `advanced/run.py` | Entry into the shared unattended lifecycle |
 | `advanced/models.py:ScriptChatModel / chat_model` | Mock/live provider selection; never graph-state credentials |
 | `advanced/hitl_graph.py:build_graph` | Planner/reviewer roles, tool nodes, and approve/reject routes |
@@ -67,9 +94,10 @@ and advanced live smoke have both been verified with the configured DeepSeek mod
 | `../shared/cli.py:execute` | Persist simulator decisions and orchestrate prepare/resume |
 | `../shared/runtime.py:ToolRuntime` | Allowlist, approval authority, and local mock receipt deduplication |
 | `tests/test_advanced.py` | Pre-effect approval, scripts, process restart, native state and policy bypass tests |
-| `tests/test_beginner.py` | Actual beginner graph/tool dispatch with a fake provider |
+| `tests/test_beginner.py` | Factory invoke, ToolMessage, thread history, and direct replies with a fake model |
 
-Read `main.py`, then `build_graph` -> nested `approval` -> `drive`.
+Read `main.py:build_agent` first. The optional advanced lesson follows
+`advanced/hitl_graph.py:build_graph` -> nested `approval` -> `drive`.
 The advanced route is planner -> weather -> planner -> approval; approval branches
 to execution or rejection, and both paths reach a separate reviewer model role.
 The graph has explicit END edges and a finite recursion limit.
@@ -110,7 +138,7 @@ one controller owns a state directory.
 
 ## Compared with a handwritten Go harness
 
-- You still design the state machine and conditional routes; LangGraph executes them.
+- create_agent owns the basic loop; explicit state-machine design is reserved for the advanced approval workflow.
 - State reducers and checkpointers replace manual message accumulation/snapshot plumbing.
 - `interrupt`/`Command` supply a durable pause protocol; approver identity/policy remain app-owned.
 - Explicit nodes make approval/execution order visible; node replay requires careful side-effect placement.
@@ -128,6 +156,7 @@ the process. No default `OTEL_SDK_DISABLED` is set.
 Installed versions (`uv pip freeze`):
 
 ```text
+langchain==1.4.7
 langgraph==1.2.17
 langgraph-checkpoint==4.3.0
 langgraph-checkpoint-sqlite==3.1.2
@@ -137,9 +166,11 @@ openai==3.37.0
 pytest==9.1.1
 ```
 
-Initial install: `uv add langgraph langchain-openai langgraph-checkpoint-sqlite python-dotenv`
-and `uv add --dev pytest`. The explicit StateGraph API follows the official
-[quickstart](https://docs.langchain.com/oss/python/langgraph/quickstart) and
+Install: `uv add langchain langgraph langchain-openai langgraph-checkpoint-sqlite python-dotenv`
+and `uv add --dev pytest`. The main entry follows the official
+[agent guide](https://docs.langchain.com/oss/python/langchain/agents) and
+[short-term memory guide](https://docs.langchain.com/oss/python/langchain/short-term-memory).
+The optional advanced workflow uses native graph checkpoint/approval APIs from the
 [interrupt guide](https://docs.langchain.com/oss/python/langgraph/interrupts).
 This version supports the synchronous SQLite saver and native update stream used here;
 the latest guide also documents the newer `stream_events(version="v3")` interface.

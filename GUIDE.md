@@ -14,7 +14,7 @@ to native-framework model doubles and run unattended.
 | --- | --- | --- |
 | 0–10 min | Read the filled COMPARISON and state-file distinctions | `ApprovalRequest`, `ToolRuntime`, `execute` |
 | 10–25 min | CrewAI beginner -> advanced module -> approve/reject | `execute_crew`, wrapped `book_flight`, `resume` |
-| 25–40 min | LangGraph beginner -> conditional graph -> `--stream` | `build_graph`, nested `approval`, `Command(resume=...)` in `drive` |
+| 25–40 min | create_agent beginner -> advanced approval graph -> `--stream` | `build_agent`, nested `approval`, `Command(resume=...)` in `drive` |
 | 40–55 min | Pydantic beginner -> deferred module -> prepare/resume | `build_agent`, `prepare`, `DeferredToolResults` in `resume` |
 | 55–70 min | SDK beginner -> native approval and handoff | `build_agents`, `require_approval`, `RunState.from_json` in `resume` |
 | 70–80 min | Run separate prepare/resume processes; inspect SQLite effects | `--phase prepare`, `--phase resume`, `effect_count` |
@@ -205,34 +205,38 @@ the researcher. Role descriptions are prompts, not Go interface implementations.
 Splitting this tiny task into two agents is a teaching choice and adds model work.
 See the official [quickstart](https://docs.crewai.com/en/quickstart).
 
-### LangGraph: make state transitions explicit
+### LangChain / LangGraph: start with create_agent
 
-**Building blocks:** StateGraph, state/reducers, nodes, conditional edges, ToolNode,
-and a checkpointer. The beginner graph defines the model/tool loop directly;
-the advanced graph adds planner and reviewer model roles with approval/rejection branches.
+**Building blocks:** `create_agent`, a chat model, tools, messages, and an optional
+checkpointer. The beginner uses the official factory instead of maintaining its
+own model/tool edges. Tool use remains the model's decision.
 
 ```python
-graph = StateGraph(MessagesState)
-graph.add_node("model", ask_model)
-graph.add_node("tools", ToolNode([get_weather]))
-graph.add_edge(START, "model")
-graph.add_conditional_edges("model", tools_condition,
-                            {"tools": "tools", END: END})
-graph.add_edge("tools", "model")
-app = graph.compile()
-result = app.invoke({"messages": [HumanMessage(content=question)]})
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+agent = create_agent(
+    model=model,
+    tools=[get_weather],
+    system_prompt="Use get_weather for city weather; identify mock data.",
+    checkpointer=InMemorySaver(),
+)
+config = {"configurable": {"thread_id": "weather-demo"}}
+result = agent.invoke({"messages": [{"role": "user", "content": question}]}, config)
 ```
 
-Read [langgraph/main.py](langgraph/main.py), then
-[advanced/hitl_graph.py](langgraph/advanced/hitl_graph.py). You own the topology and
-routing; the runtime executes nodes, applies state reducers, and saves checkpoints.
-In advanced, `interrupt(request)` suspends before booking; the simulator writes its
-decision and `Command(resume={"approved": True})` resumes the same thread ID.
-An approved native resume value alone cannot bypass the separate application ledger.
-The interrupted node restarts from its beginning, so side effects belong after the
-approval branch, not before `interrupt`. A reviewer summarizes both approve/reject outcomes.
-See the official [quickstart](https://docs.langchain.com/oss/python/langgraph/quickstart)
-and [interrupt guide](https://docs.langchain.com/oss/python/langgraph/interrupts).
+Read [langgraph/main.py](langgraph/main.py). The returned agent is still a
+CompiledStateGraph underneath; basic agents generally do not need hand-written
+nodes or edges. Reusing the agent and thread ID preserves in-process conversation
+history; greetings can finish without a tool. See the official
+[agent guide](https://docs.langchain.com/oss/python/langchain/agents).
+
+The optional [advanced approval workflow](langgraph/advanced/hitl_graph.py) remains
+an explicit graph because it teaches custom approval/rejection and recovery, not
+a basic agent loop. Its `interrupt` resumes with `Command` and the same SQLite
+thread; the interrupted node restarts, so booking effects stay in a downstream
+node and the application ledger remains authoritative. See the
+[interrupt guide](https://docs.langchain.com/oss/python/langgraph/interrupts).
 
 ### Pydantic AI: make inputs and outputs typed contracts
 
@@ -301,13 +305,14 @@ session preserves history, but is not by itself a durable tool-execution checkpo
 ### Question 1: How do abstraction levels differ, and which JDs/scenarios fit?
 
 This ranking is an interpretation of the APIs used here, not a universal
-benchmark. LangGraph exposes topology and state transitions more directly;
-CrewAI emphasizes assigned work, while Pydantic AI and the SDK package common agent loops.
+benchmark. The LangChain factory packages the ordinary agent loop; its LangGraph
+foundation also supports explicit workflows. CrewAI emphasizes assigned work, while
+Pydantic AI and the SDK provide their own focused agent abstractions.
 
 | Framework | Relative level in this lab | Main organizing idea | Example JD / scenario fit |
 | --- | --- | --- | --- |
 | CrewAI | High | Roles, tasks, and coordinated crews | Workflow automation or AI solutions roles; staged research/report pipelines |
-| LangGraph | Low to medium; explicit state-machine orchestration | Nodes, reducers, conditional edges, and checkpoints | Agent platform/workflow/backend roles; custom branching, durable approval, and graph recovery |
+| LangChain / LangGraph | Medium for create_agent; lower-level advanced graph | Factory-built agent; optional nodes, reducers, and checkpoints | Agent application/platform roles; assistants plus custom durable approval workflows |
 | Pydantic AI | Medium, close to application code | Typed tools, dependencies, and validated results | Python backend or applied AI roles; schema-driven extraction and business integrations |
 | OpenAI Agents SDK | Medium, focused runtime primitives | Runner, tools, handoffs, sessions, guardrails | Agent platform or product integration roles; assistants needing routing and policy attachment points |
 
@@ -321,7 +326,7 @@ These are engineering-fit examples, not claims about current hiring demand.
 | Framework | Loop: saves / hides | State: saves / hides | Permissions: saves / hides | HITL: saves / hides |
 | --- | --- | --- | --- | --- |
 | CrewAI | Schedules tasks and internal tool loops / prompts, intermediate work, and retry details become less visible | Passes task context / what is carried forward depends on task and memory configuration | Provides tools and validation hooks / roles and task guardrails do not enforce resource authorization | Offers task review points / review of a task result is different from approval before each side effect |
-| LangGraph | Executes explicit nodes and routes / you still design topology, budgets, and tool policy | Applies reducers and native checkpoints / thread IDs and replay semantics need care | Provides tool nodes and routing hooks / allowlists and approval authority remain app-owned | Native interrupt/Command protocol / app still supplies trusted decisions and handles node restarts |
+| LangChain / LangGraph | Factory owns the beginner loop; custom graph only for advanced routes / budgets and tool policy remain explicit | Checkpointer retains messages; advanced graph saves pending tasks / thread IDs and replay need care | Tools and middleware provide attachment points / allowlists and approval authority remain app-owned | Advanced interrupt/Command protocol / app supplies trusted decisions and handles node restarts |
 | Pydantic AI | Executes tools and validates/retries output / graph transitions and validation can add requests | Exposes message history and typed dependencies / dependency objects are not automatically persisted | Validates argument/output shape / valid data can still describe a forbidden action | Supports deferred approval requests/results / the app still stores pending work and routes human decisions |
 | Agents SDK | Runner handles tools and handoffs / a turn can contain more than one tool action | Session handles conversation history / history storage differs from resumable execution state | Provides input/output/tool guardrail attachment points / policy and OS/network enforcement remain external | Supports approval interruptions and resumable state / the app owns approver identity, storage, and resume delivery |
 

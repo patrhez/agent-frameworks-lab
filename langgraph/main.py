@@ -1,13 +1,13 @@
-"""A short model -> tool -> model weather graph."""
+"""A weather agent built with the official create_agent factory."""
 import os
 import sys
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.graph import END, START, MessagesState, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.checkpoint.memory import InMemorySaver
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared.providers import configure_beginner_environment
@@ -25,19 +25,13 @@ def get_weather(city: str) -> str:
     return result
 
 
-def build_graph(model):
-    def ask(state):
-        used_tool = any(isinstance(m, ToolMessage) for m in state["messages"])
-        client = model if used_tool else model.bind_tools([get_weather], tool_choice="required")
-        return {"messages": [client.invoke(state["messages"])]}
-
-    graph = StateGraph(MessagesState)
-    graph.add_node("model", ask)
-    graph.add_node("tools", ToolNode([get_weather]))
-    graph.add_edge(START, "model")
-    graph.add_conditional_edges("model", tools_condition, {"tools": "tools", END: END})
-    graph.add_edge("tools", "model")
-    return graph.compile()
+def build_agent(model):
+    return create_agent(
+        model=model, tools=[get_weather],
+        system_prompt="For city weather questions, use get_weather and identify its mock data "
+        "in a concise English answer. Answer other questions directly when no tool is needed.",
+        checkpointer=InMemorySaver(),
+    )
 
 
 def main() -> None:
@@ -51,12 +45,8 @@ def main() -> None:
         api_key=os.environ["OPENAI_API_KEY"], base_url=os.getenv("OPENAI_BASE_URL"),
         timeout=60, max_retries=1,
         extra_body={"thinking": {"type": "disabled"}} if os.getenv("DEEPSEEK_API_KEY") else {})
-    result = build_graph(model).invoke({"messages": [
-        SystemMessage(content="Call get_weather, then answer in English and identify mock data."),
-        HumanMessage(content=message),
-    ]}, config={"recursion_limit": 6})
-    if not calls:
-        raise RuntimeError("The model skipped get_weather; this run did not pass.")
+    result = build_agent(model).invoke({"messages": [HumanMessage(content=message)]},
+        config={"configurable": {"thread_id": "weather-demo"}, "recursion_limit": 8})
     print(f"[final] {result['messages'][-1].content}", flush=True)
 
 
