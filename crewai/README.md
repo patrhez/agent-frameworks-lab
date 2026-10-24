@@ -82,7 +82,7 @@ a state directory; local checkpoints are trusted harness storage, not user uploa
 
 Structured boundary logs work offline. `LAB_TRACE=1` adds diagnostics.
 `FRAMEWORK_TRACE=1` opts into supported CrewAI/SDK tracing exporters (with separate
-credentials/data export); AutoGen/Pydantic have native event logs via `--stream`.
+credentials/data export); LangGraph/Pydantic have native event logs via `--stream`.
 No default `OTEL_SDK_DISABLED` is set. Frameworks do not provision a VM here:
 execution isolation belongs to the harness/sandbox layer. MCP is intentionally omitted.
 

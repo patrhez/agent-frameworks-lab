@@ -14,7 +14,7 @@ to native-framework model doubles and run unattended.
 | --- | --- | --- |
 | 0–10 min | Read the filled COMPARISON and state-file distinctions | `ApprovalRequest`, `ToolRuntime`, `execute` |
 | 10–25 min | CrewAI beginner -> advanced module -> approve/reject | `execute_crew`, wrapped `book_flight`, `resume` |
-| 25–40 min | AutoGen beginner -> Team module -> `--stream` | `build_team`, `drive`, `team.load_state` |
+| 25–40 min | LangGraph beginner -> conditional graph -> `--stream` | `build_graph`, nested `approval`, `Command(resume=...)` in `drive` |
 | 40–55 min | Pydantic beginner -> deferred module -> prepare/resume | `build_agent`, `prepare`, `DeferredToolResults` in `resume` |
 | 55–70 min | SDK beginner -> native approval and handoff | `build_agents`, `require_approval`, `RunState.from_json` in `resume` |
 | 70–80 min | Run separate prepare/resume processes; inspect SQLite effects | `--phase prepare`, `--phase resume`, `effect_count` |
@@ -30,8 +30,8 @@ persisted decision -> adapter `resume` -> `ToolRuntime.book`.
    history may already contain proposed tool calls.
 2. The simulator writes approved/rejected with a reason. JSON scripts match by
    operation ID/tool. The persisted audit count selects the next step.
-3. SDK/Pydantic resume native pending tools. AutoGen restores a Team and sends
-   feedback. CrewAI recreates a task using a saved application work item.
+3. SDK/Pydantic resume native pending tools. LangGraph restores its SQLite graph
+   checkpoint and resumes an interrupted approval node. CrewAI recreates a task using a saved application work item.
 4. The effect boundary checks policy, payload binding, and approval again.
    Changing city under the same operation ID fails. Local mock receipts deduplicate.
 5. Reusing a completed directory returns its saved result. Choose a new directory
@@ -40,8 +40,9 @@ persisted decision -> adapter `resume` -> `ToolRuntime.book`.
 ### Recovery is narrower than universal crash safety
 
 Separate-process tests stop at pending approval and reconstruct new framework
-instances. CrewAI recovers at a task boundary, not an in-flight stack. AutoGen
-restores messages and manager position, not a suspended tool frame. SDK RunState
+instances. CrewAI recovers at a task boundary, not an in-flight stack. LangGraph
+restarts its interrupted node, so registration before the interrupt must be idempotent
+and booking effects must remain in a separate downstream node. SDK RunState
 and Pydantic deferred results explicitly represent pending tool execution.
 
 Rejection is terminal unless scripted all-mode explicitly starts a new attempt.
@@ -50,8 +51,8 @@ reviewers, trusted storage, deadlines, leases, and downstream idempotency.
 
 ### Interview answers grounded in the advanced code
 
-- **Where is HITL?** Before the side effect: CrewAI/AutoGen wrappers, Pydantic
-  `requires_approval`, or SDK `needs_approval`. Task-output review is later and
+- **Where is HITL?** Before the side effect: a CrewAI tool wrapper, LangGraph
+  `interrupt` and conditional routing, Pydantic `requires_approval`, or SDK `needs_approval`. Task-output review is later and
   cannot prevent an already-completed effect. The shared runtime gate remains.
 - **Why session is not checkpoint?** History informs the next model; pending
   state identifies waiting work; the effect ledger records committed mock work.
@@ -81,7 +82,7 @@ installed packages: Python does not have Go's compiled-binary dependency model.
 Use these commands inside one subproject:
 
 ```sh
-cd autogen
+cd langgraph
 uv sync                     # Install the locked project environment
 uv run main.py              # Sync as needed, then execute inside that environment
 uv run main.py "What is the weather in Beijing?"
@@ -204,28 +205,34 @@ the researcher. Role descriptions are prompts, not Go interface implementations.
 Splitting this tiny task into two agents is a teaching choice and adds model work.
 See the official [quickstart](https://docs.crewai.com/en/quickstart).
 
-### AutoGen AgentChat: work in conversations and teams
+### LangGraph: make state transitions explicit
 
-**Building blocks:** AssistantAgent, model client, messages, TaskResult, and
-optionally Team plus termination conditions. The lab uses one assistant, so
-there is no separate team scheduler.
+**Building blocks:** StateGraph, state/reducers, nodes, conditional edges, ToolNode,
+and a checkpointer. The beginner graph defines the model/tool loop directly;
+the advanced graph adds planner and reviewer model roles with approval/rejection branches.
 
 ```python
-agent = AssistantAgent(
-    name="weather_assistant", model_client=client, tools=[get_weather],
-    system_message="Call get_weather, then answer in English.",
-    reflect_on_tool_use=True, max_tool_iterations=2,
-)
-result = await agent.run(task=question)
-print(result.messages[-1].content)
+graph = StateGraph(MessagesState)
+graph.add_node("model", ask_model)
+graph.add_node("tools", ToolNode([get_weather]))
+graph.add_edge(START, "model")
+graph.add_conditional_edges("model", tools_condition,
+                            {"tools": "tools", END: END})
+graph.add_edge("tools", "model")
+app = graph.compile()
+result = app.invoke({"messages": [HumanMessage(content=question)]})
 ```
 
-Read [autogen/main.py](autogen/main.py). `reflect_on_tool_use=True` requests a
-model-written answer after tool use. A final text response ends this assistant
-run; the tool-round bound limits repeated dispatch. With multiple agents, a Team
-adds participant scheduling and its own termination rules. Do not confuse
-`agent.run(task=...)` with a CrewAI Task object. See the official
-[AgentChat quickstart](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/quickstart.html).
+Read [langgraph/main.py](langgraph/main.py), then
+[advanced/hitl_graph.py](langgraph/advanced/hitl_graph.py). You own the topology and
+routing; the runtime executes nodes, applies state reducers, and saves checkpoints.
+In advanced, `interrupt(request)` suspends before booking; the simulator writes its
+decision and `Command(resume={"approved": True})` resumes the same thread ID.
+An approved native resume value alone cannot bypass the separate application ledger.
+The interrupted node restarts from its beginning, so side effects belong after the
+approval branch, not before `interrupt`. A reviewer summarizes both approve/reject outcomes.
+See the official [quickstart](https://docs.langchain.com/oss/python/langgraph/quickstart)
+and [interrupt guide](https://docs.langchain.com/oss/python/langgraph/interrupts).
 
 ### Pydantic AI: make inputs and outputs typed contracts
 
@@ -294,19 +301,19 @@ session preserves history, but is not by itself a durable tool-execution checkpo
 ### Question 1: How do abstraction levels differ, and which JDs/scenarios fit?
 
 This ranking is an interpretation of the APIs used here, not a universal
-benchmark. Compare the surface you actually adopt: a single AutoGen assistant is
-simpler than an AutoGen team, and CrewAI Flows offer a different orchestration style.
+benchmark. LangGraph exposes topology and state transitions more directly;
+CrewAI emphasizes assigned work, while Pydantic AI and the SDK package common agent loops.
 
 | Framework | Relative level in this lab | Main organizing idea | Example JD / scenario fit |
 | --- | --- | --- | --- |
 | CrewAI | High | Roles, tasks, and coordinated crews | Workflow automation or AI solutions roles; staged research/report pipelines |
-| AutoGen AgentChat | Medium for one assistant; higher with teams | Conversations, participants, and termination | Agent orchestration or multi-agent research roles; collaborative problem-solving experiments |
+| LangGraph | Low to medium; explicit state-machine orchestration | Nodes, reducers, conditional edges, and checkpoints | Agent platform/workflow/backend roles; custom branching, durable approval, and graph recovery |
 | Pydantic AI | Medium, close to application code | Typed tools, dependencies, and validated results | Python backend or applied AI roles; schema-driven extraction and business integrations |
 | OpenAI Agents SDK | Medium, focused runtime primitives | Runner, tools, handoffs, sessions, guardrails | Agent platform or product integration roles; assistants needing routing and policy attachment points |
 
 If a JD emphasizes Python schemas and service dependencies, inspect Pydantic AI
-first. If it emphasizes multi-agent coordination, inspect AutoGen teams or CrewAI
-tasks. If it emphasizes assistant runtime composition, inspect Runner and handoffs.
+first. If it emphasizes explicit state transitions or durable approval, inspect LangGraph;
+for role/task coordination, inspect CrewAI. If it emphasizes assistant runtime composition, inspect Runner and handoffs.
 These are engineering-fit examples, not claims about current hiring demand.
 
 ### Question 2: What do they save or hide versus a Go harness?
@@ -314,7 +321,7 @@ These are engineering-fit examples, not claims about current hiring demand.
 | Framework | Loop: saves / hides | State: saves / hides | Permissions: saves / hides | HITL: saves / hides |
 | --- | --- | --- | --- | --- |
 | CrewAI | Schedules tasks and internal tool loops / prompts, intermediate work, and retry details become less visible | Passes task context / what is carried forward depends on task and memory configuration | Provides tools and validation hooks / roles and task guardrails do not enforce resource authorization | Offers task review points / review of a task result is different from approval before each side effect |
-| AutoGen | Dispatches tools, reflection, and optional team turns / participant scheduling and termination need inspection | Maintains agent messages and exposes state serialization / you must decide what to save and when | Tool registration defines available actions / a registered tool still needs identity and argument policy | Offers human participants and pause patterns / waiting inside a running agent is not automatically durable |
+| LangGraph | Executes explicit nodes and routes / you still design topology, budgets, and tool policy | Applies reducers and native checkpoints / thread IDs and replay semantics need care | Provides tool nodes and routing hooks / allowlists and approval authority remain app-owned | Native interrupt/Command protocol / app still supplies trusted decisions and handles node restarts |
 | Pydantic AI | Executes tools and validates/retries output / graph transitions and validation can add requests | Exposes message history and typed dependencies / dependency objects are not automatically persisted | Validates argument/output shape / valid data can still describe a forbidden action | Supports deferred approval requests/results / the app still stores pending work and routes human decisions |
 | Agents SDK | Runner handles tools and handoffs / a turn can contain more than one tool action | Session handles conversation history / history storage differs from resumable execution state | Provides input/output/tool guardrail attachment points / policy and OS/network enforcement remain external | Supports approval interruptions and resumable state / the app owns approver identity, storage, and resume delivery |
 
@@ -322,15 +329,15 @@ The permission column distinguishes validation from authorization. A string fiel
 containing a city is a contract. Deciding which customer may invoke a billing tool
 is an authorization rule. A prompt saying “ask permission” is not enforcement.
 
-The lab only executes a tiny input guardrail and a harmless weather tool. The
-following are framework capabilities to explore next, not features implemented
-in all four demos:
+The advanced demos execute mock booking approvals and recovery. The mechanisms
+differ; distinguish the implemented boundaries from optional framework capabilities:
 
 - **CrewAI:** task human review via `human_input=True`. Review timing matters;
   completed-task review is not automatically a pre-tool approval.
   [Human input guide](https://docs.crewai.com/en/learn/human-input-on-execution).
-- **AutoGen:** `UserProxyAgent` for feedback during a run, or stop and accept
-  feedback in a later run. [HITL tutorial](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/human-in-the-loop.html).
+- **LangGraph:** `interrupt` saves a pending node through a checkpointer; resume
+  the same thread using `Command`. This is implemented in advanced with SQLite.
+  [Interrupt guide](https://docs.langchain.com/oss/python/langgraph/interrupts).
 - **Pydantic AI:** deferred tools and approval results separate proposed work
   from approved execution. [Deferred tools guide](https://ai.pydantic.dev/deferred-tools/).
 - **Agents SDK:** a function tool can require approval, returning interruptions;
@@ -371,7 +378,7 @@ failure and recovery paths, not by counting how few lines the happy path uses.
 
 1. Run every demo for a second city and trace the same four log markers.
 2. In CrewAI, identify exactly which task result the writer sees.
-3. In AutoGen, compare final reflection with returning the raw tool summary.
+3. In LangGraph, inspect approved/rejected edges and confirm the interrupt node restarts on resume.
 4. In Pydantic AI, add an output field and inspect the contract and validation.
 5. In Agents SDK, persist two turns; then send a message longer than 500 characters
    and observe that the blocking guardrail prevents a tool call.

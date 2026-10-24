@@ -46,7 +46,7 @@ class ScriptModel(Model):
         )], usage=Usage(), response_id=None)
 
     async def stream_response(self, *args, **kwargs):
-        raise NotImplementedError("Use AutoGen/Pydantic native event streams in this lab")
+        raise NotImplementedError("Use LangGraph/Pydantic native event streams in this lab")
         yield
 
 

@@ -15,7 +15,7 @@ No key, network, keyboard prompt, or `input()` is needed.
 
 ```sh
 (cd crewai && uv run python -m advanced.run --hitl auto_approve)
-(cd autogen && uv run python -m advanced.run --hitl auto_approve --stream)
+(cd langgraph && uv run python -m advanced.run --hitl auto_approve --stream)
 (cd pydantic_ai && uv run python -m advanced.run --hitl auto_approve --stream)
 (cd openai_agents && uv run python -m advanced.run --hitl auto_approve)
 ```
@@ -60,7 +60,7 @@ Conversation persistence alone cannot guarantee crash-safe external side effects
 
 JSON logs include `[user]`, `[tool.call]`, `[tool.return]`, `[approval]`,
 `[checkpoint]`, and `[final]`. `LAB_TRACE=1` adds diagnostic logs. `--stream`
-prints native Team events in AutoGen and graph-node events in Pydantic AI.
+prints native graph-update events in LangGraph and graph-node events in Pydantic AI.
 CrewAI/SDK adapters do not claim streaming. `FRAMEWORK_TRACE=1` opts into native
 CrewAI/SDK exporters; these may require separate tracing credentials and transmit
 trace data. Offline structured logs need no exporter. No entry point sets
@@ -144,7 +144,7 @@ project, so each demo is also directly runnable as `uv run main.py` in its direc
 
 ```sh
 (cd crewai && uv run main.py)
-(cd autogen && uv run main.py)
+(cd langgraph && uv run main.py)
 (cd pydantic_ai && uv run main.py)
 (cd openai_agents && uv run main.py)
 ```
@@ -153,7 +153,7 @@ The default question is `What is the weather in Shanghai?`. All demos accept a
 custom question as a command-line argument:
 
 ```sh
-(cd autogen && uv run main.py "What is the weather in Beijing?")
+(cd langgraph && uv run main.py "What is the weather in Beijing?")
 ```
 
 Every successful run prints these markers, in order (framework diagnostics may
@@ -173,8 +173,8 @@ check detects violations. These checks are not an authorization boundary.
 
 Missing credentials stop execution with a setup message. Authentication, quota,
 connectivity, or model-access errors require fixing the relevant environment
-setting or account. A model override should support tool calling. AutoGen declares
-text/tool capabilities explicitly for models outside its built-in registry.
+setting or account. A model override should support tool calling. LangGraph uses explicit conditional
+edges and a recursion limit around its model/tool loop.
 The Agents SDK uses its Chat Completions adapter for provider compatibility.
 Pydantic AI validates final output locally and disables DeepSeek thinking mode
 to allow its output-tool selection; server-side strict tool schemas are disabled.
@@ -186,7 +186,7 @@ External tracing is opt-in for CrewAI/SDK; advanced structured logs work offline
 | --- | --- |
 | 0:00–0:20 | Configure the environment; run all four examples |
 | 0:20–1:00 | CrewAI: follow Researcher → Task context → Writer |
-| 1:00–1:40 | AutoGen: follow tool events and the assistant's termination |
+| 1:00–1:40 | LangGraph: follow conditional edges and native graph checkpoints |
 | 1:40–2:20 | Pydantic AI: inspect tool schema and validated final output |
 | 2:20–3:00 | Agents SDK: inspect Runner, guardrail, and session history |
 | 3:00–4:00 | Change a city, try a rejected input, inspect state, review the comparison |
@@ -196,7 +196,7 @@ External tracing is opt-in for CrewAI/SDK; advanced structured logs work offline
 | Project | Abstractions to locate | Loop observation | State observation | Go harness notes |
 | --- | --- | --- | --- | --- |
 | [CrewAI](crewai/README.md) | Agent / Task / Crew | Crew task/agent loop | Task outputs + work item | App-owned policy and replay |
-| [AutoGen AgentChat](autogen/README.md) | AssistantAgent / Team / termination | Team scheduler | Native Team state | App-owned approval gate |
+| [LangGraph](langgraph/README.md) | StateGraph / ToolNode / interrupt | Explicit nodes and conditional edges | SQLite graph state | Native interrupt; app-owned effect policy |
 | [Pydantic AI](pydantic_ai/README.md) | Agent / tool / output model | Agent graph | Typed history + deferred IDs | Typed approval protocol |
 | [OpenAI Agents SDK](openai_agents/README.md) | Agent / Runner / session / guardrail | Runner + handoff | SQLiteSession + RunState | Native interruption protocol |
 
