@@ -66,3 +66,15 @@
 
 Publication follows the user's requested concise commit message. The final response
 provides the verified commit URL after a successful non-force push.
+
+## Follow-up: direct DeepSeek loading for beginner demos
+
+- Fixed the gap between shell-local assignments and child-process environments:
+  all beginner entry points now call the shared provider loader at runtime.
+- The loader reads only literal DeepSeek key/base/model assignments from `~/.zshrc`
+  as a fallback, without executing shell configuration or logging values.
+- Explicit environment/.env provider settings retain priority. Advanced mock
+  runs remain independent of local credentials; gated live paths share the fallback.
+- All four beginner demos were run for Beijing with inherited provider variables
+  removed and completed real DeepSeek model/tool calls successfully.
+- Follow-up regression suite: **49 passed, 4 skipped**; seven provider-loading tests cover literal assignments, precedence, placeholders, missing files, and non-execution of shell commands.

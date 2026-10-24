@@ -13,10 +13,8 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-if os.getenv("DEEPSEEK_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
-    os.environ["OPENAI_BASE_URL"] = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
-    os.environ["OPENAI_MODEL"] = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared.providers import configure_beginner_environment
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 calls: list[str] = []
 
@@ -28,10 +26,11 @@ class WeatherAnswer(BaseModel):
 
 
 def main() -> None:
+    configure_beginner_environment()
     message = " ".join(sys.argv[1:]) or "What is the weather in Shanghai?"
     print(f"[user] {message}", flush=True)
     if not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") == "...":
-        raise SystemExit("Set DEEPSEEK_API_KEY or OPENAI_API_KEY in the root .env or shell first.")
+        raise SystemExit("Set a provider key in the environment, root .env, or a literal DEEPSEEK_API_KEY in ~/.zshrc.")
     calls.clear()
     agent = Agent(
         OpenAIChatModel(os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),

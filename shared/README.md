@@ -6,7 +6,7 @@
 | `runtime.py` | Allowlist, operation payload binding, SQLite decision/effect boundary |
 | `cli.py` | Finite prepare/decide/resume lifecycle and terminal replay |
 | `storage.py` | Atomic JSON checkpoint replacement |
-| `providers.py` | Explicitly gated live provider settings, no credential serialization |
+| `providers.py` | Environment/.env/literal zshrc fallback; live gate; no credential serialization |
 | `tools_mock.py` | Low/high-risk mock definitions; no external side effects |
 | `logging_util.py` | Structured boundary logs and optional LAB_TRACE diagnostics |
 | `testing/contracts.py` | Cross-framework behavioral tests in independent environments |

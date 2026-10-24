@@ -25,7 +25,9 @@ and `HITL_SCRIPT` is the fallback script path. Timeout scripts reject immediatel
 No code waits for keyboard input. `--role readonly` blocks bookings; the default
 traveler role still requires approval for high-risk tools.
 
-For a paid smoke, export provider variables and run:
+Beginner and gated live runs also read literal DeepSeek settings from `~/.zshrc`
+when no provider key is set in the environment/root `.env`; no manual export is
+needed for those assignments. Shell scripts are never executed. For a paid smoke:
 
 ```sh
 RUN_LIVE=1 uv run pytest tests/test_advanced.py::test_live_smoke -q
@@ -44,6 +46,7 @@ all booking effects remain mock. `--live` also requires `RUN_LIVE=1`.
 | `advanced/hitl_crew.py:ScriptLLM` | Offline ReAct model only; Crew dispatch remains real |
 | `advanced/hitl_crew.py:prepare / resume` | Save work item, then recreate task from saved output |
 | `../shared/cli.py:execute` | Bounded prepare/decision/resume orchestration |
+| `../shared/providers.py` | Environment/.env/literal ~/.zshrc provider loading |
 | `../shared/hitl.py` | Request/Decision and unattended approvers |
 | `../shared/runtime.py:ToolRuntime` | Allowlist, payload binding, decision audit, mock effects |
 | `tests/test_advanced.py` | Native integration, new-process recovery, scripts, gated live smoke |

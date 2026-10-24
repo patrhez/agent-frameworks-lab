@@ -7,10 +7,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-if os.getenv("DEEPSEEK_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
-    os.environ["OPENAI_BASE_URL"] = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
-    os.environ["OPENAI_MODEL"] = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared.providers import configure_beginner_environment
 os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
 os.environ.setdefault("CREWAI_TRACING_ENABLED", "true" if os.getenv("FRAMEWORK_TRACE") == "1" else "false")
 os.environ.setdefault("CREWAI_STORAGE_DIR", str(Path(__file__).parent / ".local-data"))
@@ -32,10 +30,11 @@ def get_weather(city: str) -> str:
 
 
 def main() -> None:
+    configure_beginner_environment()
     message = " ".join(sys.argv[1:]) or "What is the weather in Shanghai?"
     print(f"[user] {message}", flush=True)
     if not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") == "...":
-        raise SystemExit("Set DEEPSEEK_API_KEY or OPENAI_API_KEY in the root .env or shell first.")
+        raise SystemExit("Set a provider key in the environment, root .env, or a literal DEEPSEEK_API_KEY in ~/.zshrc.")
     calls.clear()
     llm = LLM(model=f"openai/{os.getenv('OPENAI_MODEL', 'gpt-4.1-mini')}",
               base_url=os.getenv("OPENAI_BASE_URL"), timeout=60)

@@ -121,22 +121,24 @@ four independent Python projects, rather than a uv workspace.
 
 ### Pass credentials through the environment
 
-Your three DeepSeek values already exist as assignments in `~/.zshrc`. In an
-interactive shell where those assignments have loaded, export their names:
+The beginner demos use `shared.providers.configure_beginner_environment`.
+It first loads the root `.env`, preserving inherited environment values. When no
+usable provider key is available, it parses only the three literal DeepSeek
+assignments from `~/.zshrc`, including assignments without `export`. The same
+fallback is used by explicitly gated advanced live runs.
+
+The loader never sources shell configuration or executes substitutions. If values
+are computed by shell commands or variable expansion, export them normally:
 
 ```sh
 export DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DEEPSEEK_DEFAULT_MODEL
 ```
 
-Assignments create shell variables; export makes them available to child
-processes such as `uv run`. This command does not print their values. If you edit
-`.zshrc`, open a fresh terminal before exporting. An ignored root `.env` is the
-alternative described in the README. The demos load it explicitly; uv itself is
-not responsible for that dotenv behavior.
-
-Each program maps DeepSeek settings to its OpenAI-compatible client configuration.
-The key remains a client credential, never part of the user message or tool result.
-No demo automatically sources your shell configuration.
+For literal settings already in `~/.zshrc`, no manual export is required. Explicit
+environment/root `.env` keys take priority; an explicit usable OpenAI key keeps
+its provider selection instead of silently switching to a shell-only DeepSeek key.
+The key remains a client credential, never a user message, tool result, log field,
+or saved checkpoint. Defaults and placeholders in `.env.example` contain no key.
 
 ## 2. Recognize the loop you already know
 

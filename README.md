@@ -108,17 +108,19 @@ cp .env.example .env
 Every demo loads that exact root `.env` using `python-dotenv`. Existing shell
 environment variables take precedence. Never put a real key in `.env.example`.
 
-If you already assign DeepSeek variables in your interactive `~/.zshrc`,
-export their names before running the demos; no values need to be printed or copied:
+If no usable provider key is available in the environment or root `.env`, the
+shared loader reads the three literal DeepSeek assignments from `~/.zshrc`:
+`DEEPSEEK_API_KEY`, `DEEPSEEK_API_BASE_URL`, and `DEEPSEEK_DEFAULT_MODEL`.
+Both `NAME=value` and `export NAME=value` work. You can run `uv run main.py`
+directly without manually exporting these existing assignments.
 
-```sh
-export DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DEEPSEEK_DEFAULT_MODEL
-```
-
-Shell assignments without `export` are not inherited by child processes;
-export their names to make them available. The demos do not read or source `~/.zshrc`.
-Alternatively, uncomment and configure the DeepSeek entries in your ignored `.env`.
-A nonempty DeepSeek key selects DeepSeek over OpenAI settings.
+The loader only parses those names: it never sources the file, runs shell commands,
+or expands variable/command substitutions. Computed shell values must be exported
+normally. Environment settings take precedence over `.env`, then the shell fallback;
+an explicit usable OpenAI key prevents automatic selection of a shell-only DeepSeek key.
+An explicitly configured DeepSeek key selects DeepSeek over OpenAI. Credentials
+are used only by API clients and are never printed or copied into repository files.
+Advanced mock runs do not read the shell file; gated live runs use this same loader.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
