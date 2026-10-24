@@ -7,6 +7,32 @@ The tool always returns sunny, 22 C, explicitly labeled as mock data.
 Model requests use the configured OpenAI-compatible provider; the weather tool
 makes no network requests. Live verification used DeepSeek.
 
+## Injected mock tool dependencies
+
+All four beginner entries now receive per-run services instead of relying on pure
+functions or global dependency instances. `shared/dependencies.py` defines
+`AppDeps` and a `WeatherClient` backed by an in-memory dictionary. Its `.get(city)`
+logs `[deps.weather]`; tools never use requests/httpx or call a weather endpoint.
+
+| Framework | Injection boundary | Tool access |
+| --- | --- | --- |
+| Pydantic AI | `Agent(deps_type=AppDeps)` and `run_sync(..., deps=deps)` | `RunContext[AppDeps].deps` with `@agent.tool` |
+| OpenAI Agents SDK | `Runner.run(..., context=deps)` | `RunContextWrapper[AppDeps].context` |
+| LangChain / LangGraph | `context_schema=AppDeps` and `invoke(..., context=deps)` | Injected `ToolRuntime[AppDeps].context` |
+| CrewAI | `WeatherTool(deps=deps)` / `BookingTool(deps=deps)` | Tool model field used by `_run` |
+
+The shared `read_weather` helper delegates to `deps.weather.get(city)` and retains
+consistent tool logs. Advanced tools keep their policy/approval runtime through
+injected context or Tool fields. Checkpoints persist operation state, not service
+instances; services are rebuilt when resuming. Pydantic's context-free `tool_plain`
+is deliberately not used for tools requiring dependencies.
+
+Run `./scripts/test_all.sh -q` without a key. Provider doubles are local, dependency
+substitution tests assert the injected result/call record, and default in-process
+tests reject TCP connections. This increment performs no live model requests.
+Existing model-backed entry commands still require provider credentials; tool
+dependencies remain mocks even if live model inference is explicitly selected.
+
 ## Advanced: unattended approval and recovery
 
 Keep the beginner `main.py` examples as the first step. Advanced entries mock only
@@ -59,7 +85,7 @@ by operation ID; external providers need downstream idempotency/reconciliation.
 Conversation persistence alone cannot guarantee crash-safe external side effects.
 
 JSON logs include `[user]`, `[tool.call]`, `[tool.return]`, `[approval]`,
-`[checkpoint]`, and `[final]`. `LAB_TRACE=1` adds diagnostic logs. `--stream`
+`[checkpoint]`, `[deps.weather]`, and `[final]`. `LAB_TRACE=1` adds diagnostic logs. `--stream`
 prints native graph-update events in LangGraph and graph-node events in Pydantic AI.
 CrewAI/SDK adapters do not claim streaming. `FRAMEWORK_TRACE=1` opts into native
 CrewAI/SDK exporters; these may require separate tracing credentials and transmit

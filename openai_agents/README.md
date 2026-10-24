@@ -1,5 +1,26 @@
 # OpenAI Agents SDK weather assistant
 
+## Injecting mock dependencies: local context
+
+The weather tool takes `ctx: RunContextWrapper[AppDeps]` as its first parameter.
+`ctx.context.read_weather(city)` calls the injected `weather.get(city)` mock;
+`Runner.run(..., context=deps)` supplies the object. The wrapper is hidden from the
+model-visible tool schema. There is no captured/global weather singleton.
+
+```python
+deps = AppDeps(weather=WeatherClient(cache={"Beijing": "Injected weather (mock)."}))
+result = await Runner.run(agent, "Beijing weather?", context=deps)
+```
+
+Both advanced tools and the `needs_approval` callback use the same local context.
+`AppDeps.for_runtime` carries the policy/receipt runtime without removing native
+interruptions. Checkpoints serialize only the operation ID for custom context;
+resume rebuilds services with `RunContextWrapper(context=deps)` before running.
+Tool clients and caches are never serialized as services. `tool_plain` is a
+Pydantic AI API; here the equivalent context-free function signature would lose
+run-scoped injection. `[deps.weather]` records mock client use without HTTP.
+
+
 ## Beginner -> advanced reading order
 
 Read `main.py` first, then `advanced/run.py`, then `approvals_handoff.py` through the
@@ -46,6 +67,7 @@ all booking effects remain mock. `--live` also requires `RUN_LIVE=1`.
 | `advanced/approvals_handoff.py:require_approval` | Bind actual arguments before native interruption |
 | `advanced/approvals_handoff.py:prepare / resume` | RunState JSON restore, approve/reject, and Runner continuation |
 | `../shared/cli.py:execute` | Bounded prepare/decision/resume orchestration |
+| `../shared/dependencies.py` | Per-run mock weather/cache services and AppDeps |
 | `../shared/providers.py` | Environment/.env/literal ~/.zshrc provider loading |
 | `../shared/hitl.py` | Request/Decision and unattended approvers |
 | `../shared/runtime.py:ToolRuntime` | Allowlist, payload binding, decision audit, mock effects |

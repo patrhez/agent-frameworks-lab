@@ -4,7 +4,7 @@ import os
 
 from agents import (
     Agent, GuardrailFunctionOutput, Model, ModelResponse, ModelSettings, OpenAIChatCompletionsModel,
-    RunState, Runner, SQLiteSession, Usage, function_tool, input_guardrail,
+    RunContextWrapper, RunState, Runner, SQLiteSession, Usage, function_tool, input_guardrail,
     output_guardrail, set_tracing_disabled,
 )
 from openai import AsyncOpenAI
@@ -12,6 +12,7 @@ from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessa
 
 from shared.logging_util import log
 from shared.providers import live_settings
+from shared.dependencies import AppDeps
 from shared.storage import read_json, write_json
 
 
@@ -65,6 +66,23 @@ async def mock_output_check(ctx, agent, output):
                                   tripwire_triggered="mock" not in str(output).lower())
 
 
+@function_tool
+def get_weather(ctx: RunContextWrapper[AppDeps], city: str) -> str:
+    """Read mock weather from the injected per-run services."""
+    return ctx.context.read_weather(city)
+
+
+async def require_approval(ctx: RunContextWrapper[AppDeps], arguments, tool_name):
+    ctx.context.require_runtime().request(arguments["city"])
+    return True
+
+
+@function_tool(needs_approval=require_approval, failure_error_function=None)
+def book_flight(ctx: RunContextWrapper[AppDeps], city: str) -> str:
+    """Execute only through the injected, policy-checked approval runtime."""
+    return ctx.context.require_runtime().book(city)
+
+
 def build_agents(runtime, live=False):
     set_tracing_disabled(os.getenv("FRAMEWORK_TRACE", "0") != "1")
     if live:
@@ -74,20 +92,6 @@ def build_agents(runtime, live=False):
     else:
         model = ScriptModel(runtime.city)
     extra = {"thinking": {"type": "disabled"}} if live and os.getenv("DEEPSEEK_API_KEY") else None
-
-    @function_tool
-    def get_weather(city: str) -> str:
-        """Read low-risk mock weather."""
-        return runtime.weather(city)
-
-    async def require_approval(ctx, arguments, tool_name):
-        runtime.request(arguments["city"])
-        return True
-
-    @function_tool(needs_approval=require_approval, failure_error_function=None)
-    def book_flight(city: str) -> str:
-        """Create a high-risk mock booking, only after approval."""
-        return runtime.book(city)
 
     booking = Agent(name="Booking", model=model, tools=[book_flight],
                     model_settings=ModelSettings(tool_choice="book_flight", extra_body=extra),
@@ -109,14 +113,16 @@ async def prepare(runtime, live=False, stream=False):
     session = SQLiteSession(session_id, runtime.directory / "session.sqlite")
     try:
         result = await Runner.run(agent, f"Check weather and book a mock flight to {runtime.city}.",
-                                  session=session, max_turns=8)
+                                  context=AppDeps.for_runtime(runtime), session=session, max_turns=8)
         if not result.interruptions:
             raise RuntimeError(f"Expected native approval interruption, got: {result.final_output}")
         if not any(item.type == "handoff_output_item" for item in result.new_items):
             raise RuntimeError("The router did not execute a real SDK handoff")
         log("handoff", source="Router", target="Booking")
         write_json(runtime.directory / "checkpoint.json",
-                   {"run_state": result.to_state().to_json(), "session_id": session_id})
+                   {"run_state": result.to_state().to_json(context_serializer=lambda deps: {
+                       "operation_id": deps.require_runtime().operation_id,
+                   }), "session_id": session_id})
     finally:
         session.close()
 
@@ -124,7 +130,10 @@ async def prepare(runtime, live=False, stream=False):
 async def resume(runtime, live=False, stream=False):
     agent = build_agents(runtime, live)
     saved = read_json(runtime.directory / "checkpoint.json")
-    state = await RunState.from_json(agent, saved["run_state"])
+    # Rebuild services from trusted application state; never persist service instances.
+    deps = AppDeps.for_runtime(runtime)
+    state = await RunState.from_json(agent, saved["run_state"],
+                                     context_override=RunContextWrapper(context=deps))
     for interruption in state.get_interruptions():
         if runtime.status() == "approved":
             state.approve(interruption)
@@ -132,7 +141,7 @@ async def resume(runtime, live=False, stream=False):
             state.reject(interruption, rejection_message="Rejected by simulated approver; do not retry.")
     session = SQLiteSession(saved["session_id"], runtime.directory / "session.sqlite")
     try:
-        result = await Runner.run(agent, state, session=session, max_turns=8)
+        result = await Runner.run(agent, state, context=deps, session=session, max_turns=8)
         if result.interruptions:
             raise RuntimeError("Unexpected new approval request on resume")
         log("trace", guardrail="mock-output", passed=True)

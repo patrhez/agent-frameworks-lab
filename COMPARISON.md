@@ -30,3 +30,15 @@ only the model provider by default; native loops, tools, and state APIs execute.
 Answer drafts: [GUIDE.md](GUIDE.md#4-self-check-answers). The advanced reading path
 adds concrete answers about pre-tool approval, history versus checkpoint, and local
 mock receipts versus external idempotency.
+
+## Dependency injection in the running demos
+
+| Framework | Per-run injection | Model-visible tool arguments |
+| --- | --- | --- |
+| CrewAI | Tool instance `deps` field, excluded from serialization | city only |
+| LangChain / LangGraph | context_schema + injected ToolRuntime; Runtime for advanced nodes | city only |
+| Pydantic AI | deps_type + RunContext + @agent.tool; advanced keeps ToolRuntime deps | city only |
+| Agents SDK | Runner context + RunContextWrapper, rebuilt on checkpoint restore | city only |
+
+All services are mock/in-memory and log `[deps.weather]`. Dependency substitution
+is tested without provider keys; no weather HTTP endpoint is contacted.

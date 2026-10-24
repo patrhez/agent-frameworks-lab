@@ -8,10 +8,11 @@ os.environ.setdefault("CREWAI_TRACING_ENABLED", "true" if os.getenv("FRAMEWORK_T
 os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
 
 from crewai import Agent, BaseLLM, Crew, LLM, Task
-from crewai.tools import tool
+from tools_injected import BookingTool, WeatherTool
 
 from shared.logging_util import log
 from shared.providers import live_settings
+from shared.dependencies import AppDeps
 from shared.storage import read_json, write_json
 
 
@@ -44,19 +45,10 @@ def execute_crew(runtime, live=False, previous=None):
     else:
         model = ScriptLLM(runtime)
 
-    @tool("get_weather")
-    def get_weather(city: str) -> str:
-        """Read low-risk mock weather."""
-        return runtime.weather(city)
-
-    @tool("book_flight")
-    def book_flight(city: str) -> str:
-        """Request a mock booking; pre-tool approval blocks effects until approved."""
-        return runtime.guarded_book(city)
-
+    deps = AppDeps.for_runtime(runtime)
     agent = Agent(role="Travel executor", goal="Use weather and booking tools safely.",
                   backstory="Respect pending or rejected approval; never bypass tools.",
-                  tools=[get_weather, book_flight], llm=model, max_iter=5,
+                  tools=[WeatherTool(deps=deps), BookingTool(deps=deps)], llm=model, max_iter=5,
                   allow_delegation=False, max_retry_limit=0)
     task = Task(agent=agent,
         description=f"Call get_weather and book_flight for {runtime.city}. If pending or rejected, "

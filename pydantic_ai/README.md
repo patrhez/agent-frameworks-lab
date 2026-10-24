@@ -1,5 +1,25 @@
 # Pydantic AI weather assistant
 
+## Injecting mock dependencies: why not tool_plain?
+
+`shared.dependencies.AppDeps` contains a per-run `WeatherClient` with an in-memory
+cache. `build_agent` declares `deps_type=AppDeps`; `@agent.tool` receives
+`ctx: RunContext[AppDeps]`, then `ctx.deps.read_weather(city)` calls the injected
+`deps.weather.get(city)`. The run passes `deps=AppDeps(...)` explicitly.
+`tool_plain` is for tools without a RunContext, so it cannot express this injection.
+
+```python
+deps = AppDeps(weather=WeatherClient(cache={"Beijing": "Injected weather (mock)."}))
+agent = build_agent(model)
+result = agent.run_sync("Beijing weather?", deps=deps)
+```
+
+The advanced deferred path keeps `RunContext[ToolRuntime]`; ToolRuntime now accepts
+an injected `weather` client and delegates to its `.get`. Native deferred approvals
+remain in place. `[deps.weather]` proves service use. No tool dependency issues HTTP;
+unit models are fake and default in-process tests block TCP connections.
+
+
 ## Beginner -> advanced reading order
 
 Read `main.py` first, then `advanced/run.py`, then `deferred_hitl.py` through the
@@ -46,6 +66,7 @@ all booking effects remain mock. `--live` also requires `RUN_LIVE=1`.
 | `advanced/deferred_hitl.py:prepare` | Capture DeferredToolRequests, messages, and call ID |
 | `advanced/deferred_hitl.py:resume` | Feed DeferredToolResults through native graph |
 | `../shared/cli.py:execute` | Bounded prepare/decision/resume orchestration |
+| `../shared/dependencies.py` | Per-run mock weather/cache services and AppDeps |
 | `../shared/providers.py` | Environment/.env/literal ~/.zshrc provider loading |
 | `../shared/hitl.py` | Request/Decision and unattended approvers |
 | `../shared/runtime.py:ToolRuntime` | Allowlist, payload binding, decision audit, mock effects |
@@ -92,7 +113,7 @@ The beginner reference below is retained as the original first lesson.
 ## Five-line concept map
 
 1. **Agent** binds the model, instructions, function tools, and final output type.
-2. **Function tool** uses `@agent.tool_plain`; no runtime dependencies are needed here.
+2. **Function tool** uses `@agent.tool` and `RunContext[AppDeps]` for injected services.
 3. **Output model** is `WeatherAnswer(BaseModel)`, validated before a result is returned.
 4. **AgentRunResult** exposes that typed object as `result.output`.
 5. **UsageLimits** bounds model requests, including validation retries, to six.
@@ -116,13 +137,13 @@ the standard four markers plus `[structured]` containing city, answer, and is_mo
 It rejects a run that skipped the weather tool or failed to identify mock data.
 
 **Pydantic models are tool/output contracts:** in `main.py`, the
-`class WeatherAnswer` block (lines 22–25) defines the final answer's fields; the
-`output_type=WeatherAnswer` line (line 39) attaches the contract to the agent. The
-`@agent.tool_plain` / `def get_weather(city: str) -> str` lines (lines 46–47) generate the
+`class WeatherAnswer` block defines the final answer's fields; the
+`output_type=WeatherAnswer` declaration attaches the contract to the agent. The
+`@agent.tool` / `def get_weather(ctx: RunContext[AppDeps], city: str) -> str` definitions generate the
 tool argument schema from annotations. `Field(min_length=1)` rejects empty city
 or answer fields. The plain string tool result is distinct from the validated
 final Pydantic output; annotations are not a business authorization policy.
-This demonstrates structured output; dependency injection is not needed.
+This demonstrates both structured output and per-run dependency injection.
 
 ## Compared with a handwritten while-loop
 
@@ -131,8 +152,8 @@ This demonstrates structured output; dependency injection is not needed.
 - You consume `result.output.answer` instead of manually parsing final JSON.
 
 The installed API uses `output_type`, not the older `result_type` spelling.
-`tool_plain` is the official registration method for a tool without `RunContext`;
-use `@agent.tool` with `RunContext[Deps]` when adding dependency injection.
+`@agent.tool` with `RunContext[AppDeps]` supplies dependencies; `tool_plain` would
+be appropriate only for a tool with no injected context.
 History is available through `result.all_messages()`; this demo does not persist it.
 
 ## Versions and official references

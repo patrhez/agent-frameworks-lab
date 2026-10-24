@@ -1,6 +1,24 @@
 # Advanced harness changelog
 
-## Latest increment: use create_agent for the beginner weather assistant
+## Latest increment: tools use injected mock deps
+
+- Added shared AppDeps and an in-memory WeatherClient/cache with `[deps.weather]` logs.
+- Pydantic AI beginner uses deps_type, @agent.tool, RunContext, and explicit run deps.
+- SDK beginner/advanced tools and approval callback use RunContextWrapper context;
+  persisted RunState stores operation metadata and restores fresh service instances.
+- LangChain keeps create_agent, adding context_schema and native ToolRuntime injection.
+  Advanced graph tools/nodes use native context while preserving interrupt/Command recovery.
+- CrewAI beginner/advanced tools use BaseTool fields with injected dependencies,
+  excluded from serialization; no tool captures a runtime/client in a closure.
+- Existing Pydantic deferred tools keep their injected policy runtime, now backed
+  by a replaceable mock weather client. Approval and effect checks remain intact.
+- Added service substitution tests, per-run isolation checks, hidden-parameter
+  schema checks, and default in-process TCP blocking. No live requests in this increment.
+- No dependency/package versions changed; existing isolated uv projects remain.
+- Full default regression: **56 passed, 4 skipped**; no live model requests were run.
+  Default in-process tests block TCP, and tool-service tests verify injected sentinel results and call records.
+
+## Previous increment: use create_agent for the beginner weather assistant
 
 - Replaced the manual StateGraph / ToolNode / tools_condition ReAct loop in
   `langgraph/main.py` with `langchain.agents.create_agent(model, tools, system_prompt)`.

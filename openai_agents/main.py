@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agents import (
     Agent, GuardrailFunctionOutput, OpenAIChatCompletionsModel, Runner, SQLiteSession,
-    function_tool, input_guardrail, set_tracing_disabled,
+    RunContextWrapper, function_tool, input_guardrail, set_tracing_disabled,
 )
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -15,18 +15,14 @@ from openai import AsyncOpenAI
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared.providers import configure_beginner_environment
+from shared.dependencies import AppDeps
 set_tracing_disabled(os.getenv("FRAMEWORK_TRACE", "0") != "1")
-calls: list[str] = []
 
 
 @function_tool
-def get_weather(city: str) -> str:
+def get_weather(ctx: RunContextWrapper[AppDeps], city: str) -> str:
     """Return mock weather for the requested city, never live weather."""
-    print(f"[tool.call] get_weather(city={city!r})", flush=True)
-    result = f"{city}: sunny, 22 C (mock data)."
-    calls.append(city)
-    print(f"[tool.return] {result}", flush=True)
-    return result
+    return ctx.context.read_weather(city)
 
 
 @input_guardrail(run_in_parallel=False)
@@ -51,7 +47,7 @@ async def main() -> None:
     print(f"[user] {message}", flush=True)
     if not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") == "...":
         raise SystemExit("Set a provider key in the environment, root .env, or a literal DEEPSEEK_API_KEY in ~/.zshrc.")
-    calls.clear()
+    deps = AppDeps()
     agent = Agent(
         name="Weather assistant", model=OpenAIChatCompletionsModel(
             model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
@@ -63,8 +59,8 @@ async def main() -> None:
     # A session without a file is in-memory; opt into persistence with SESSION_DB.
     session = SQLiteSession("weather-lab", os.getenv("SESSION_DB", ":memory:"))
     try:
-        result = await Runner.run(agent, message, session=session, max_turns=6)
-        if not calls:
+        result = await Runner.run(agent, message, context=deps, session=session, max_turns=6)
+        if not deps.weather.calls:
             raise RuntimeError("The model skipped get_weather; this run did not pass.")
         print(f"[final] {result.final_output}", flush=True)
     finally:

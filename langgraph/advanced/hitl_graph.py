@@ -4,19 +4,33 @@ from dataclasses import asdict
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, messages_to_dict
-from langchain_core.tools import tool
+from langchain.tools import ToolRuntime as ToolContext, tool
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.runtime import Runtime
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, interrupt
 
 from shared.logging_util import log
 from shared.storage import read_json, write_json
+from shared.dependencies import AppDeps
 from .models import chat_model
 
 
 class TravelState(MessagesState):
     approved: bool
+
+
+@tool
+def get_weather(city: str, runtime: ToolContext[AppDeps]) -> str:
+    """Read mock weather through the graph's injected run context."""
+    return runtime.context.read_weather(city)
+
+
+@tool
+def book_flight(city: str, runtime: ToolContext[AppDeps]) -> str:
+    """Create a mock receipt through the injected approval runtime."""
+    return runtime.context.require_runtime().book(city)
 
 
 def build_graph(runtime, checkpointer, live=False):
@@ -25,17 +39,7 @@ def build_graph(runtime, checkpointer, live=False):
     planner_model = chat_model(runtime.city, live)
     reviewer_model = chat_model(runtime.city, live, reviewer=True)
 
-    @tool
-    def get_weather(city: str) -> str:
-        """Read low-risk mock weather."""
-        return runtime.weather(city)
-
-    @tool
-    def book_flight(city: str) -> str:
-        """Create a high-risk mock receipt only after the shared policy approves."""
-        return runtime.book(city)
-
-    def planner(state):
+    def planner(state, runtime: Runtime[AppDeps]):
         weather_done = any(isinstance(m, ToolMessage) and m.name == "get_weather"
                            for m in state["messages"])
         expected = "book_flight" if weather_done else "get_weather"
@@ -45,16 +49,17 @@ def build_graph(runtime, checkpointer, live=False):
                                *state["messages"]])
         if len(result.tool_calls) != 1 or result.tool_calls[0]["name"] != expected:
             raise RuntimeError("Planner did not emit the expected single typed tool call")
-        runtime.authorize(result.tool_calls[0]["name"])
+        runtime.context.require_runtime().authorize(result.tool_calls[0]["name"])
         return {"messages": [result]}
 
-    def approval(state):
+    def approval(state, runtime: Runtime[AppDeps]):
         call = state["messages"][-1].tool_calls[0]
-        request = runtime.request(call["args"]["city"])
+        policy = runtime.context.require_runtime()
+        request = policy.request(call["args"]["city"])
         # This node restarts on resume. Registration is idempotent; NO effect before interrupt.
         decision = interrupt(asdict(request))
         approved = isinstance(decision, dict) and decision.get("approved") is True
-        if approved != (runtime.status() == "approved"):
+        if approved != (policy.status() == "approved"):
             raise PermissionError("Native resume value disagrees with the persisted policy decision")
         return {"approved": approved}
 
@@ -71,7 +76,7 @@ def build_graph(runtime, checkpointer, live=False):
             raise ValueError("Reviewer must identify mock data")
         return {"messages": [answer]}
 
-    graph = StateGraph(TravelState)
+    graph = StateGraph(TravelState, context_schema=AppDeps)
     for name, node in {"planner": planner, "weather": ToolNode([get_weather]),
                        "approval": approval, "execute": ToolNode([book_flight]),
                        "rejected": rejected, "reviewer": reviewer}.items():
@@ -98,11 +103,12 @@ def drive(runtime, live, stream, resuming):
     }
     with SqliteSaver.from_conn_string(str(runtime.directory / "graph.sqlite")) as saver:
         graph = build_graph(runtime, saver, live)
+        deps = AppDeps.for_runtime(runtime)
         if stream:
-            for event in graph.stream(payload, config=config, stream_mode="updates"):
+            for event in graph.stream(payload, config=config, context=deps, stream_mode="updates"):
                 log("stream", framework="langgraph", nodes=list(event))
         else:
-            graph.invoke(payload, config=config)
+            graph.invoke(payload, config=config, context=deps)
         snapshot = graph.get_state(config)
         interrupted = any(task.interrupts for task in snapshot.tasks)
         # Native checkpoints include messages; this separate export is a conversation view,

@@ -1,5 +1,25 @@
 # CrewAI weather crew
 
+## Injecting mock dependencies: Tool model fields
+
+`tools_injected.py` defines `WeatherTool(BaseTool)` and `BookingTool(BaseTool)`.
+Each instance receives `deps: AppDeps` through its constructor/model field, marked
+`Field(exclude=True)` so service objects are not serialized. `_run` reads `self.deps`;
+weather delegates to the injected `weather.get(city)` mock.
+
+```python
+deps = AppDeps(weather=WeatherClient(cache={"Beijing": "Injected weather (mock)."}))
+weather_tool = WeatherTool(deps=deps)
+# Register the instance on Agent(tools=[weather_tool], ...).
+```
+
+The beginner researcher and advanced crew use these Tool instances, not closures.
+The advanced dependency carries ToolRuntime and preserves its pre-effect approval
+check. `tool_plain` belongs to Pydantic AI; this framework expresses injection through
+Tool fields instead. `[deps.weather]` records service use. Weather/cache methods
+are pure in-memory mocks; tools never create HTTP clients.
+
+
 ## Beginner -> advanced reading order
 
 Read `main.py` first, then `advanced/run.py`, then `hitl_crew.py` through the
@@ -40,12 +60,14 @@ all booking effects remain mock. `--live` also requires `RUN_LIVE=1`.
 
 | File / symbol | Responsibility |
 | --- | --- |
-| `main.py` | Original weather happy path |
+| `main.py` | Weather crew with injected Tool instances |
+| `tools_injected.py` | BaseTool fields hold deps; _run uses mock services |
 | `advanced/run.py` | CLI entry and access to shared modules |
 | `advanced/hitl_crew.py:execute_crew` | Create the actual Crew and register guarded tools |
 | `advanced/hitl_crew.py:ScriptLLM` | Offline ReAct model only; Crew dispatch remains real |
 | `advanced/hitl_crew.py:prepare / resume` | Save work item, then recreate task from saved output |
 | `../shared/cli.py:execute` | Bounded prepare/decision/resume orchestration |
+| `../shared/dependencies.py` | Per-run mock weather/cache services and AppDeps |
 | `../shared/providers.py` | Environment/.env/literal ~/.zshrc provider loading |
 | `../shared/hitl.py` | Request/Decision and unattended approvers |
 | `../shared/runtime.py:ToolRuntime` | Allowlist, payload binding, decision audit, mock effects |
@@ -94,7 +116,7 @@ The beginner reference below is retained as the original first lesson.
 2. **Task** describes work and its expected output: `research` and `write`.
 3. **Crew** coordinates those agents and tasks: the `Crew(...).kickoff()` block.
 4. **Process** selects scheduling: `Process.sequential` runs research before writing.
-5. **Tool** exposes a Python function to an agent: `@tool("get_weather")` on the researcher.
+5. **Tool** is a `WeatherTool(deps=deps)` instance on the researcher.
 
 ## Run
 

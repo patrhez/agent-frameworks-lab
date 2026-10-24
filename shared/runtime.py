@@ -5,13 +5,15 @@ from pathlib import Path
 import sqlite3
 
 from .hitl import ApprovalRequest, Decision
+from .dependencies import WeatherClient
 from .logging_util import log
-from .tools_mock import RISK, book_flight, get_weather, validate_city
+from .tools_mock import RISK, book_flight, validate_city
 
 
 class ToolRuntime:
-    def __init__(self, directory: Path, operation_id: str, city: str, role="traveler"):
+    def __init__(self, directory: Path, operation_id: str, city: str, role="traveler", weather=None):
         self.directory, self.operation_id = Path(directory), operation_id
+        self.weather_client = weather if weather is not None else WeatherClient()
         self.city, self.role = validate_city(city), role
         if role not in ("traveler", "readonly"):
             raise ValueError("Unknown role")
@@ -92,11 +94,11 @@ class ToolRuntime:
                        (self.operation_id,))
         log("approval", operation_id=self.operation_id, status="retry-new-attempt")
 
-    def weather(self, city: str) -> str:
+    def weather(self, city: str, client=None) -> str:
         self.authorize("get_weather")
         log("tool.call", tool="get_weather", city=city)
         log("approval", tool="get_weather", status="approved", reason="Low-risk allowlist")
-        result = get_weather(city)
+        result = (client if client is not None else self.weather_client).get(city)
         log("tool.return", tool="get_weather", result=result)
         return result
 

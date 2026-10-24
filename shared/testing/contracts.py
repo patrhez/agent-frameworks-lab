@@ -10,12 +10,14 @@ import sys
 
 from shared.hitl import AutoApprover
 from shared.runtime import ToolRuntime
+from shared.dependencies import WeatherClient
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def check_gate(adapter, tmp_path, monkeypatch, mode):
-    runtime = ToolRuntime(tmp_path, "test-operation", "Shanghai")
+    client = WeatherClient(cache={"Shanghai": "Injected approval weather (mock)."})
+    runtime = ToolRuntime(tmp_path, "test-operation", "Shanghai", weather=client)
     effects = []
 
     def mock_effect(city, operation_id):
@@ -25,6 +27,7 @@ def check_gate(adapter, tmp_path, monkeypatch, mode):
 
     monkeypatch.setattr("shared.runtime.book_flight", mock_effect)
     asyncio.run(adapter.prepare(runtime))
+    assert client.calls, "Native tool dispatch must use the injected mock weather dependency"
     assert runtime.status() == "pending"
     assert runtime.effect_count() == 0 and effects == []
     assert (tmp_path / "checkpoint.json").exists()

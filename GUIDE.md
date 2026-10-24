@@ -64,6 +64,29 @@ reviewers, trusted storage, deadlines, leases, and downstream idempotency.
 These Python decorators do not provision a VM. Execution isolation belongs to
 harness/sandbox infrastructure. MCP is optional and intentionally omitted here.
 
+## Follow the dependency boundary before reading the framework loop
+
+`shared.dependencies.AppDeps` groups a mock weather client and an optional approval
+runtime. `WeatherClient.get` uses only its in-memory cache and fixed mock data; no
+HTTP client is constructed. Calls print `[deps.weather]`, so you can trace actual
+service use. A separate AppDeps per run avoids a global singleton.
+
+- Pydantic AI passes `deps` and receives `RunContext[AppDeps]`. Use `@agent.tool`;
+  `tool_plain` deliberately omits the context needed for DI.
+- The SDK passes `context` to Runner and tools read `ctx.context`.
+- LangChain's create_agent declares `context_schema`; native ToolRuntime hides
+  run context from model-visible arguments. Advanced nodes use Runtime context too.
+- CrewAI Tool instances have excluded dependency model fields and use `self.deps`.
+
+The `read_weather` helper calls the injected `.weather.get`. With a ToolRuntime it
+also checks low-risk permissions. Booking tools keep the existing approval ledger;
+DI does not grant authorization. SDK checkpoints store only operation metadata for
+custom context and rebuild service objects on restore. Native context is not a
+place to put model-readable secrets, nor a substitute for durable side-effect state.
+
+Tests substitute cache results, assert call records and ToolMessages, and block
+in-process TCP connections by default. No live inference is needed for these checks.
+
 ## 1. Use uv as a project manager
 
 Think of `pyproject.toml` as the dependency declaration, `uv.lock` as the resolved
@@ -188,7 +211,7 @@ an agent is the role that performs it. The crew coordinates both.
 
 ```python
 researcher = Agent(role="Researcher", goal="Fetch weather",
-                   backstory="Use tools", tools=[get_weather], llm=llm)
+                   backstory="Use tools", tools=[WeatherTool(deps=deps)], llm=llm)
 writer = Agent(role="Writer", goal="Explain weather",
                backstory="Write concisely", llm=llm)
 research = Task(description="Call get_weather for Shanghai",
@@ -220,9 +243,10 @@ agent = create_agent(
     tools=[get_weather],
     system_prompt="Use get_weather for city weather; identify mock data.",
     checkpointer=InMemorySaver(),
+    context_schema=AppDeps,
 )
 config = {"configurable": {"thread_id": "weather-demo"}}
-result = agent.invoke({"messages": [{"role": "user", "content": question}]}, config)
+result = agent.invoke({"messages": [{"role": "user", "content": question}]}, config, context=AppDeps())
 ```
 
 Read [langgraph/main.py](langgraph/main.py). The returned agent is still a
@@ -241,8 +265,8 @@ node and the application ledger remains authoritative. See the
 ### Pydantic AI: make inputs and outputs typed contracts
 
 **Building blocks:** Agent, typed function tool, Pydantic output model, model/provider,
-and usage limits. Optional dependencies use `RunContext[Deps]`; this lab instead
-demonstrates a structured final result.
+and usage limits. `RunContext[AppDeps]` supplies an injected mock weather client,
+while `output_type` keeps the structured final result.
 
 ```python
 class WeatherAnswer(BaseModel):
@@ -250,13 +274,13 @@ class WeatherAnswer(BaseModel):
     answer: str
     is_mock: bool
 
-agent = Agent(model, output_type=WeatherAnswer)
+agent = Agent(model, deps_type=AppDeps, output_type=WeatherAnswer)
 
-@agent.tool_plain
-def get_weather(city: str) -> str:
-    return f"{city}: sunny, 22 C (mock data)."
+@agent.tool
+def get_weather(ctx: RunContext[AppDeps], city: str) -> str:
+    return ctx.deps.read_weather(city)
 
-result = agent.run_sync(question, usage_limits=UsageLimits(request_limit=6))
+result = agent.run_sync(question, deps=AppDeps(), usage_limits=UsageLimits(request_limit=6))
 print(result.output.answer)
 ```
 
@@ -280,12 +304,16 @@ handoff. The SDK package can use an OpenAI-compatible Chat Completions model;
 using this SDK does not require using an OpenAI-hosted model in this lab.
 
 ```python
+@function_tool
+def get_weather(ctx: RunContextWrapper[AppDeps], city: str) -> str:
+    return ctx.context.read_weather(city)
+
 agent = Agent(
     name="Weather assistant", model=model,
     tools=[get_weather], input_guardrails=[short_input],
 )
 session = SQLiteSession("weather-lab", ":memory:")
-result = await Runner.run(agent, question, session=session, max_turns=6)
+result = await Runner.run(agent, question, context=AppDeps(), session=session, max_turns=6)
 print(result.final_output)
 ```
 

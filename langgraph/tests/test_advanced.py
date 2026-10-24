@@ -7,6 +7,7 @@ from langgraph.types import Command
 
 from advanced import hitl_graph as adapter
 from shared.runtime import ToolRuntime
+from shared.dependencies import AppDeps
 from shared.storage import read_json
 from shared.testing.contracts import (
     check_gate, check_process_resume, check_script, check_beginner, check_live, cli,
@@ -60,7 +61,8 @@ def test_native_checkpoint_cannot_bypass_policy(tmp_path):
         assert state.values["messages"][-1].tool_calls[0]["name"] == "book_flight"
         # A forged native resume payload is insufficient without a ledger decision.
         with pytest.raises(PermissionError, match="persisted policy"):
-            graph.invoke(Command(resume={"approved": True}), config=config)
+            graph.invoke(Command(resume={"approved": True}), config=config,
+                         context=AppDeps.for_runtime(runtime))
     assert runtime.status() == "pending"
     assert runtime.effect_count() == 0
     assert (tmp_path / "graph.sqlite").exists()

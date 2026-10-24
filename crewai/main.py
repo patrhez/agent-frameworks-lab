@@ -9,24 +9,13 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared.providers import configure_beginner_environment
+from shared.dependencies import AppDeps
 os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
 os.environ.setdefault("CREWAI_TRACING_ENABLED", "true" if os.getenv("FRAMEWORK_TRACE") == "1" else "false")
 os.environ.setdefault("CREWAI_STORAGE_DIR", str(Path(__file__).parent / ".local-data"))
 
 from crewai import Agent, Crew, LLM, Process, Task
-from crewai.tools import tool
-
-calls: list[str] = []
-
-
-@tool("get_weather")
-def get_weather(city: str) -> str:
-    """Return mock weather for the requested city, never live weather."""
-    print(f"[tool.call] get_weather(city={city!r})", flush=True)
-    result = f"{city}: sunny, 22 C (mock data)."
-    calls.append(city)
-    print(f"[tool.return] {result}", flush=True)
-    return result
+from tools_injected import WeatherTool
 
 
 def main() -> None:
@@ -35,14 +24,14 @@ def main() -> None:
     print(f"[user] {message}", flush=True)
     if not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") == "...":
         raise SystemExit("Set a provider key in the environment, root .env, or a literal DEEPSEEK_API_KEY in ~/.zshrc.")
-    calls.clear()
+    deps = AppDeps()
     llm = LLM(model=f"openai/{os.getenv('OPENAI_MODEL', 'gpt-4.1-mini')}",
               base_url=os.getenv("OPENAI_BASE_URL"), timeout=60)
     # Agent: role, model, and available tools.
     researcher = Agent(
         role="Weather researcher", goal="Fetch weather using get_weather.",
         backstory="You use tools rather than guessing weather.",
-        tools=[get_weather], llm=llm, allow_delegation=False, max_iter=4,
+        tools=[WeatherTool(deps=deps)], llm=llm, allow_delegation=False, max_iter=4,
     )
     writer = Agent(
         role="Weather writer", goal="Answer using the researcher's result.",
@@ -65,7 +54,7 @@ def main() -> None:
         agents=[researcher, writer], tasks=[research, write],
         process=Process.sequential, memory=False, cache=False, verbose=False,
     ).kickoff()
-    if not calls:
+    if not deps.weather.calls:
         raise RuntimeError("The model skipped get_weather; this run did not pass.")
     print(f"[final] {result.raw}", flush=True)
 

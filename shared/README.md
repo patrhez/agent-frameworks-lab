@@ -3,6 +3,7 @@
 | Module | Responsibility |
 | --- | --- |
 | `hitl.py` | Immutable ApprovalRequest/Decision, automatic and scripted approvers |
+| `dependencies.py` | Per-run AppDeps and in-memory weather/cache; no HTTP |
 | `runtime.py` | Allowlist, operation payload binding, SQLite decision/effect boundary |
 | `cli.py` | Finite prepare/decide/resume lifecycle and terminal replay |
 | `storage.py` | Atomic JSON checkpoint replacement |

@@ -1,5 +1,26 @@
 # LangChain weather agent and LangGraph approval workflow
 
+## Injecting mock dependencies: context_schema and ToolRuntime
+
+The beginner keeps `create_agent` and adds `context_schema=AppDeps`. The tool's
+`runtime: ToolRuntime[AppDeps]` parameter is injected by the framework and hidden
+from model-visible arguments. `runtime.context.read_weather(city)` delegates to
+`deps.weather.get(city)`. Supply a separate object to each invocation:
+
+```python
+deps = AppDeps(weather=WeatherClient(cache={"Beijing": "Injected weather (mock)."}))
+result = agent.invoke({"messages": [{"role": "user", "content": "Beijing weather?"}]},
+                      config=config, context=deps)
+```
+
+The advanced StateGraph also declares `context_schema=AppDeps`. Native ToolRuntime
+injects tool services; `langgraph.runtime.Runtime` injects context into graph nodes.
+Interrupt/resume reconstructs the context without persisting clients in graph state.
+`tool_plain` is a different framework's context-free API; this project uses native
+runtime injection rather than a closure or singleton. `[deps.weather]` exposes
+service use. All weather/cache dependencies are in-memory mocks with no HTTP.
+
+
 ## Five-line concept map
 
 1. **create_agent** builds the beginner agent from a model, tools, and a system prompt.
@@ -21,9 +42,10 @@ agent = create_agent(
     tools=[get_weather],
     system_prompt="Use get_weather for city weather and identify mock data.",
     checkpointer=InMemorySaver(),
+    context_schema=AppDeps,
 )
 config = {"configurable": {"thread_id": "weather-demo"}}
-result = agent.invoke({"messages": [{"role": "user", "content": "Beijing weather?"}]}, config)
+result = agent.invoke({"messages": [{"role": "user", "content": "Beijing weather?"}]}, config, context=AppDeps())
 ```
 
 The configured model and weather function are defined in the runnable `main.py`.
