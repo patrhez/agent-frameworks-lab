@@ -12,8 +12,7 @@ if os.getenv("DEEPSEEK_API_KEY"):
     os.environ["OPENAI_BASE_URL"] = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
     os.environ["OPENAI_MODEL"] = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat")
 os.environ.setdefault("CREWAI_TELEMETRY_DISABLED", "true")
-os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
-os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+os.environ.setdefault("CREWAI_TRACING_ENABLED", "true" if os.getenv("FRAMEWORK_TRACE") == "1" else "false")
 os.environ.setdefault("CREWAI_STORAGE_DIR", str(Path(__file__).parent / ".local-data"))
 
 from crewai import Agent, Crew, LLM, Process, Task

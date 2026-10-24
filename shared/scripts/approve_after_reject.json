@@ -1,0 +1,4 @@
+{"steps": [
+  {"tool_name": "book_flight", "status": "rejected", "reason": "First review rejects"},
+  {"tool_name": "book_flight", "status": "approved", "reason": "New attempt approved"}
+]}

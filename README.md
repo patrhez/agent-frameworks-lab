@@ -7,6 +7,85 @@ The tool always returns sunny, 22 C, explicitly labeled as mock data.
 Model requests use the configured OpenAI-compatible provider; the weather tool
 makes no network requests. Live verification used DeepSeek.
 
+## Advanced: unattended approval and recovery
+
+Keep the beginner `main.py` examples as the first step. Advanced entries mock only
+the model provider by default; framework loops, tool dispatch, and state APIs are real.
+No key, network, keyboard prompt, or `input()` is needed.
+
+```sh
+(cd crewai && uv run python -m advanced.run --hitl auto_approve)
+(cd autogen && uv run python -m advanced.run --hitl auto_approve --stream)
+(cd pydantic_ai && uv run python -m advanced.run --hitl auto_approve --stream)
+(cd openai_agents && uv run python -m advanced.run --hitl auto_approve)
+```
+
+Low-risk `get_weather` passes the allowlist; high-risk `book_flight` persists a
+pending request and cannot create its mock receipt until approved. All projects
+support these commands **inside their own directory**:
+
+```sh
+uv run python -m advanced.run --hitl auto_reject --state-dir .local-data/rejected
+uv run python -m advanced.run --hitl scripted \
+  --script ../shared/scripts/approve_after_reject.json --state-dir .local-data/scripted
+uv run python -m advanced.run --hitl scripted \
+  --script ../shared/scripts/timeout.json --state-dir .local-data/timeout
+
+# Separate processes; prepare exits with zero booking effects.
+uv run python -m advanced.run --phase prepare --state-dir .local-data/persisted
+uv run python -m advanced.run --phase resume --state-dir .local-data/persisted
+```
+
+Reusing a completed directory returns its terminal outcome without a new effect.
+Use a fresh directory for another operation/mode. Scripted all-mode can explicitly
+start a new attempt after rejection if a matching next step exists. A rejected
+call never executes; the next approval applies to the new attempt. Timeouts reject
+immediately, without sleeping. Script position and decisions survive restarts.
+
+`HITL_MODE=auto_approve|auto_reject|scripted` defaults to `auto_approve`; `--hitl`
+overrides it. `HITL_SCRIPT` supplies a path if `--script` is omitted. `--role readonly`
+denies booking before model execution. The default traveler can request it but
+still needs approval. Unknown tools fail the shared allowlist.
+
+### State and observability
+
+`control.json` identifies an operation. `checkpoint.json` stores pending work.
+Framework history/session files are separate from `approvals.sqlite`, whose
+requests, decisions, and mock effects have separate tables. See each module map
+for native APIs. Only load trusted local harness checkpoints, not client input.
+
+One controller owns a state directory. SQLite deduplicates local mock receipts
+by operation ID; external providers need downstream idempotency/reconciliation.
+Conversation persistence alone cannot guarantee crash-safe external side effects.
+
+JSON logs include `[user]`, `[tool.call]`, `[tool.return]`, `[approval]`,
+`[checkpoint]`, and `[final]`. `LAB_TRACE=1` adds diagnostic logs. `--stream`
+prints native Team events in AutoGen and graph-node events in Pydantic AI.
+CrewAI/SDK adapters do not claim streaming. `FRAMEWORK_TRACE=1` opts into native
+CrewAI/SDK exporters; these may require separate tracing credentials and transmit
+trace data. Offline structured logs need no exporter. No entry point sets
+`OTEL_SDK_DISABLED` by default.
+
+### Test without a key; opt into live smoke
+
+```sh
+./scripts/test_all.sh -q
+(cd openai_agents && uv run pytest)
+# Export provider settings first. This opt-in spends model tokens.
+(cd pydantic_ai && RUN_LIVE=1 uv run pytest tests/test_advanced.py::test_live_smoke -q)
+(cd openai_agents && RUN_LIVE=1 uv run python -m advanced.run --live \
+  --state-dir .local-data/live)
+```
+
+All four projects have a gated live smoke. Without `RUN_LIVE=1` tests skip it
+and `--live` is rejected. Expect several model calls, roughly 10–120 seconds
+per project, and provider token charges. Bookings remain mock. Tests use fresh
+temporary directories; provider credentials never enter serialized state.
+
+Read [GUIDE.md](GUIDE.md) for the 90-minute return path,
+[COMPARISON.md](COMPARISON.md) for the completed comparison, and
+[ADVANCED_CHANGELOG.md](ADVANCED_CHANGELOG.md) for versions and limitations.
+
 ## Setup
 
 Prerequisites: [uv](https://docs.astral.sh/uv/getting-started/installation/),
@@ -97,7 +176,7 @@ text/tool capabilities explicitly for models outside its built-in registry.
 The Agents SDK uses its Chat Completions adapter for provider compatibility.
 Pydantic AI validates final output locally and disables DeepSeek thinking mode
 to allow its output-tool selection; server-side strict tool schemas are disabled.
-Tracing/telemetry is disabled explicitly in the CrewAI and Agents SDK demos.
+External tracing is opt-in for CrewAI/SDK; advanced structured logs work offline.
 
 ## Four-hour route
 
@@ -108,20 +187,20 @@ Tracing/telemetry is disabled explicitly in the CrewAI and Agents SDK demos.
 | 1:00–1:40 | AutoGen: follow tool events and the assistant's termination |
 | 1:40–2:20 | Pydantic AI: inspect tool schema and validated final output |
 | 2:20–3:00 | Agents SDK: inspect Runner, guardrail, and session history |
-| 3:00–4:00 | Change a city, try a rejected input, inspect state, fill the comparison |
+| 3:00–4:00 | Change a city, try a rejected input, inspect state, review the comparison |
 
-## Project comparison worksheet
+## Project comparison map
 
 | Project | Abstractions to locate | Loop observation | State observation | Go harness notes |
 | --- | --- | --- | --- | --- |
-| [CrewAI](crewai/README.md) | Agent / Task / Crew | | | |
-| [AutoGen AgentChat](autogen/README.md) | AssistantAgent / model client / TaskResult | | | |
-| [Pydantic AI](pydantic_ai/README.md) | Agent / tool / output model | | | |
-| [OpenAI Agents SDK](openai_agents/README.md) | Agent / Runner / session / guardrail | | | |
+| [CrewAI](crewai/README.md) | Agent / Task / Crew | Crew task/agent loop | Task outputs + work item | App-owned policy and replay |
+| [AutoGen AgentChat](autogen/README.md) | AssistantAgent / Team / termination | Team scheduler | Native Team state | App-owned approval gate |
+| [Pydantic AI](pydantic_ai/README.md) | Agent / tool / output model | Agent graph | Typed history + deferred IDs | Typed approval protocol |
+| [OpenAI Agents SDK](openai_agents/README.md) | Agent / Runner / session / guardrail | Runner + handoff | SQLiteSession + RunState | Native interruption protocol |
 
 ## How I compare with a Go harness
 
-Use these five questions to fill [COMPARISON.md](COMPARISON.md), based on code
+Use these five questions to review [COMPARISON.md](COMPARISON.md), based on code
 and observed behavior:
 
 1. **Loop:** Who calls the model, dispatches tools, limits iterations, and stops?
@@ -147,7 +226,7 @@ rejection before a model call and SQLite history across two runs.
 
 - [x] All four directories complete `uv run main.py` with a live model.
 - [x] All four live runs call the mock `get_weather` tool.
-- [x] Root README, four project READMEs, and comparison worksheet exist.
+- [x] Root README, four project READMEs, and filled comparison exist.
 - [x] No real API key is included in repository files.
 - [x] Go harness comparison covers loop, checkpoint, permissions, HITL, persistence.
 

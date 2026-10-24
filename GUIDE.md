@@ -5,6 +5,64 @@ reads the four implementations, and answers the three self-check questions.
 All four demos were tested against the same configured DeepSeek model,
 `deepseek-flash`, on 2026-10-24. Only weather data is mocked; model calls are real.
 
+## Return-from-away: a 90-minute advanced path
+
+Read this before the original beginner tutorial below. Advanced commands default
+to native-framework model doubles and run unattended.
+
+| Time | Read and run | Three symbols to follow |
+| --- | --- | --- |
+| 0–10 min | Read the filled COMPARISON and state-file distinctions | `ApprovalRequest`, `ToolRuntime`, `execute` |
+| 10–25 min | CrewAI beginner -> advanced module -> approve/reject | `execute_crew`, wrapped `book_flight`, `resume` |
+| 25–40 min | AutoGen beginner -> Team module -> `--stream` | `build_team`, `drive`, `team.load_state` |
+| 40–55 min | Pydantic beginner -> deferred module -> prepare/resume | `build_agent`, `prepare`, `DeferredToolResults` in `resume` |
+| 55–70 min | SDK beginner -> native approval and handoff | `build_agents`, `require_approval`, `RunState.from_json` in `resume` |
+| 70–80 min | Run separate prepare/resume processes; inspect SQLite effects | `--phase prepare`, `--phase resume`, `effect_count` |
+| 80–90 min | Explain the three interview answers aloud | HITL location, session vs checkpoint, when to keep Go |
+
+Each project's README has a module map. Stable symbols replace fragile line
+ranges. Follow `advanced/run.py` -> `shared.cli.execute` -> adapter `prepare` ->
+persisted decision -> adapter `resume` -> `ToolRuntime.book`.
+
+### Inspect each boundary
+
+1. Before approval the request is pending, effects are empty, and framework
+   history may already contain proposed tool calls.
+2. The simulator writes approved/rejected with a reason. JSON scripts match by
+   operation ID/tool. The persisted audit count selects the next step.
+3. SDK/Pydantic resume native pending tools. AutoGen restores a Team and sends
+   feedback. CrewAI recreates a task using a saved application work item.
+4. The effect boundary checks policy, payload binding, and approval again.
+   Changing city under the same operation ID fails. Local mock receipts deduplicate.
+5. Reusing a completed directory returns its saved result. Choose a new directory
+   for another operation or another approval mode.
+
+### Recovery is narrower than universal crash safety
+
+Separate-process tests stop at pending approval and reconstruct new framework
+instances. CrewAI recovers at a task boundary, not an in-flight stack. AutoGen
+restores messages and manager position, not a suspended tool frame. SDK RunState
+and Pydantic deferred results explicitly represent pending tool execution.
+
+Rejection is terminal unless scripted all-mode explicitly starts a new attempt.
+Timeout immediately rejects. Real approval services still need authenticated
+reviewers, trusted storage, deadlines, leases, and downstream idempotency.
+
+### Interview answers grounded in the advanced code
+
+- **Where is HITL?** Before the side effect: CrewAI/AutoGen wrappers, Pydantic
+  `requires_approval`, or SDK `needs_approval`. Task-output review is later and
+  cannot prevent an already-completed effect. The shared runtime gate remains.
+- **Why session is not checkpoint?** History informs the next model; pending
+  state identifies waiting work; the effect ledger records committed mock work.
+  A real downstream service still needs a stable idempotency key and reconciliation.
+- **When keep Go?** Keep your harness when existing identity/policy, cancellation,
+  durable workflow coordination, and side-effect semantics outweigh orchestration
+  savings. Frameworks help when their contracts/coordination reduce maintained code.
+
+These Python decorators do not provision a VM. Execution isolation belongs to
+harness/sandbox infrastructure. MCP is optional and intentionally omitted here.
+
 ## 1. Use uv as a project manager
 
 Think of `pyproject.toml` as the dependency declaration, `uv.lock` as the resolved
@@ -316,7 +374,7 @@ failure and recovery paths, not by counting how few lines the happy path uses.
 5. In Agents SDK, persist two turns; then send a message longer than 500 characters
    and observe that the blocking guardrail prevents a tool call.
 6. For each framework, sketch how you would approve a side effect and recover
-   after a crash. Fill [COMPARISON.md](COMPARISON.md) in your own words.
+   after a crash. Explain [COMPARISON.md](COMPARISON.md) in your own words.
 
-The worksheet intentionally stays blank even though this guide supplies answers.
-The learning objective is to connect those answers to concrete execution behavior.
+The comparison is now filled. Connect each cell to an API call and test result
+rather than memorizing the table.

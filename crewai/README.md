@@ -1,5 +1,90 @@
 # CrewAI weather crew
 
+## Beginner -> advanced reading order
+
+Read `main.py` first, then `advanced/run.py`, then `hitl_crew.py` through the
+symbols in the module map. Beginner behavior is retained; advanced is independent.
+
+```sh
+uv sync
+uv run main.py                 # Beginner: provider key required
+uv run python -m advanced.run --hitl auto_approve
+uv run python -m advanced.run --hitl auto_reject --state-dir .local-data/rejected
+uv run python -m advanced.run --hitl scripted \
+  --script ../shared/scripts/approve_after_reject.json --state-dir .local-data/scripted
+uv run python -m advanced.run --phase prepare --state-dir .local-data/persisted
+uv run python -m advanced.run --phase resume --state-dir .local-data/persisted
+uv run pytest                 # Native mock tests; live smoke skipped by default
+```
+
+All paths above are relative to this project directory. Advanced defaults to no
+key and no network; it mocks the provider, not the framework loop. Choose a fresh
+state directory for each experiment; a completed directory returns its terminal
+result. `HITL_MODE` supplies the default (`auto_approve`), `--hitl` overrides it,
+and `HITL_SCRIPT` is the fallback script path. Timeout scripts reject immediately.
+No code waits for keyboard input. `--role readonly` blocks bookings; the default
+traveler role still requires approval for high-risk tools.
+
+For a paid smoke, export provider variables and run:
+
+```sh
+RUN_LIVE=1 uv run pytest tests/test_advanced.py::test_live_smoke -q
+```
+
+This sends several model requests, typically 10–120 seconds, billed by the provider;
+all booking effects remain mock. `--live` also requires `RUN_LIVE=1`.
+
+## Advanced module map
+
+| File / symbol | Responsibility |
+| --- | --- |
+| `main.py` | Original weather happy path |
+| `advanced/run.py` | CLI entry and access to shared modules |
+| `advanced/hitl_crew.py:execute_crew` | Create the actual Crew and register guarded tools |
+| `advanced/hitl_crew.py:ScriptLLM` | Offline ReAct model only; Crew dispatch remains real |
+| `advanced/hitl_crew.py:prepare / resume` | Save work item, then recreate task from saved output |
+| `../shared/cli.py:execute` | Bounded prepare/decision/resume orchestration |
+| `../shared/hitl.py` | Request/Decision and unattended approvers |
+| `../shared/runtime.py:ToolRuntime` | Allowlist, payload binding, decision audit, mock effects |
+| `tests/test_advanced.py` | Native integration, new-process recovery, scripts, gated live smoke |
+
+## What advanced demonstrates
+
+The actual Crew tool calls pass through `runtime.guarded_book` before any
+booking body runs. Pending/rejected calls return a blocked result. Resume creates
+a new Crew task using a saved task outcome; this is an application work-item
+checkpoint, not native mid-loop stack serialization.
+
+`human_input=True` reviews task output; it is intentionally not used because this
+lab needs pre-tool approval without a human prompt. CrewAI Flow/hierarchical
+orchestration is not implemented in advanced; compare the official
+[Flows](https://docs.crewai.com/en/concepts/flows) and
+[human input](https://docs.crewai.com/en/learn/human-input-on-execution) guides.
+Other adapters supply the three implemented orchestration examples.
+
+## Advanced vs a handwritten Go harness
+
+- Crew owns model/tool iterations; the app owns approval and task-boundary replay.
+- The wrapped function is the permission boundary; role text is only a prompt.
+- `crew-session.json` is task context; `checkpoint.json` is a work item; `approvals.sqlite` records policy/effects.
+- A local mock receipt deduplicates by operation ID; real effects need downstream idempotency.
+
+## Persistence, tracing, and isolation
+
+Session/history files and `checkpoint.json` are separate from `approvals.sqlite`.
+The latter has requests, decisions, and local mock receipt tables. Operation IDs
+bind approvals to exact tool arguments. Replaying a local mock receipt is safe;
+real downstream APIs need their own idempotency/reconciliation. One controller owns
+a state directory; local checkpoints are trusted harness storage, not user uploads.
+
+Structured boundary logs work offline. `LAB_TRACE=1` adds diagnostics.
+`FRAMEWORK_TRACE=1` opts into supported CrewAI/SDK tracing exporters (with separate
+credentials/data export); AutoGen/Pydantic have native event logs via `--stream`.
+No default `OTEL_SDK_DISABLED` is set. Frameworks do not provision a VM here:
+execution isolation belongs to the harness/sandbox layer. MCP is intentionally omitted.
+
+The beginner reference below is retained as the original first lesson.
+
 ## Five-line concept map
 
 1. **Agent** holds a role, goal, model, and tools: `researcher` and `writer` in `main.py`.

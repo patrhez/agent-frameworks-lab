@@ -17,7 +17,7 @@ if os.getenv("DEEPSEEK_API_KEY"):
     os.environ["OPENAI_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
     os.environ["OPENAI_BASE_URL"] = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com")
     os.environ["OPENAI_MODEL"] = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat")
-set_tracing_disabled(True)
+set_tracing_disabled(os.getenv("FRAMEWORK_TRACE", "0") != "1")
 calls: list[str] = []
 
 
