@@ -1,0 +1,322 @@
+# A Go developer's guide to uv and four agent frameworks
+
+Start with [README.md](README.md) to run the lab. This guide explains the tools,
+reads the four implementations, and answers the three self-check questions.
+All four demos were tested against the same configured DeepSeek model,
+`deepseek-flash`, on 2026-10-24. Only weather data is mocked; model calls are real.
+
+## 1. Use uv as a project manager
+
+Think of `pyproject.toml` as the dependency declaration, `uv.lock` as the resolved
+dependency graph, and `.venv` as the project's isolated Python installation area.
+This analogy is useful for Go developers, but a virtual environment also isolates
+installed packages: Python does not have Go's compiled-binary dependency model.
+
+| File | Purpose | Commit? |
+| --- | --- | --- |
+| `pyproject.toml` | Project metadata, Python requirement, direct dependencies | Yes |
+| `uv.lock` | Exact dependency resolution | Yes |
+| `.python-version` | Interpreter selection for local commands | Yes |
+| `.venv/` | Installed interpreter environment and packages | No |
+| `.env` | Local application settings and credentials | No |
+
+Use these commands inside one subproject:
+
+```sh
+cd autogen
+uv sync                     # Install the locked project environment
+uv run main.py              # Sync as needed, then execute inside that environment
+uv run main.py "What is the weather in Beijing?"
+uv run python --version     # Inspect the project's interpreter
+uv tree                     # Inspect the dependency graph
+uv pip freeze               # Inspect what is actually installed
+```
+
+`uv run` means you normally do not need to activate `.venv` manually. Avoid a bare
+`python main.py` unless you deliberately selected the same interpreter.
+
+For a separate scratch experiment, the dependency workflow is:
+
+```sh
+uv init --bare --name weather-scratch --python 3.11 weather-scratch
+cd weather-scratch
+uv python pin 3.11
+uv add python-dotenv         # Update declaration, lockfile, and environment
+uv add --dev pytest          # Add an optional development dependency
+uv remove pytest --dev      # Remove that development dependency
+uv lock --upgrade           # Deliberately refresh the resolution
+uv sync --locked            # Fail if the lockfile needs to change
+```
+
+These examples are instructions, not extra dependencies added to this lab.
+`uv pip install` is a lower-level environment operation; use `uv add` when a
+dependency should remain declared and reproducible. See the official
+[project guide](https://docs.astral.sh/uv/guides/projects/).
+
+### Why four projects?
+
+Each command runs in one directory and uses that directory's environment.
+CrewAI resolved `openai==2.54.0`; the other projects resolved `openai==3.37.0`.
+That concrete version difference shows why a single shared environment would
+introduce an unrelated compatibility exercise. This is a Git monorepo containing
+four independent Python projects, rather than a uv workspace.
+
+### Pass credentials through the environment
+
+Your three DeepSeek values already exist as assignments in `~/.zshrc`. In an
+interactive shell where those assignments have loaded, export their names:
+
+```sh
+export DEEPSEEK_API_KEY DEEPSEEK_API_BASE_URL DEEPSEEK_DEFAULT_MODEL
+```
+
+Assignments create shell variables; export makes them available to child
+processes such as `uv run`. This command does not print their values. If you edit
+`.zshrc`, open a fresh terminal before exporting. An ignored root `.env` is the
+alternative described in the README. The demos load it explicitly; uv itself is
+not responsible for that dotenv behavior.
+
+Each program maps DeepSeek settings to its OpenAI-compatible client configuration.
+The key remains a client credential, never part of the user message or tool result.
+No demo automatically sources your shell configuration.
+
+## 2. Recognize the loop you already know
+
+A minimal harness repeatedly asks the model what to do, executes requested tools,
+adds results to conversation state, and stops at a final answer. This Go-shaped
+pseudocode names responsibilities rather than depending on a particular Go SDK:
+
+```go
+messages := []Message{User(question)}
+for turn := 0; turn < maxTurns; turn++ {
+    reply := model.Generate(ctx, messages, toolSchemas)
+    messages = append(messages, reply.Message)
+    if len(reply.ToolCalls) == 0 {
+        return reply.Text
+    }
+    for _, call := range reply.ToolCalls {
+        args := validateArguments(call)
+        authorize(actor, call.Name, args)
+        if needsApproval(call) {
+            checkpointAndPause(messages, call)
+            return "waiting for approval"
+        }
+        result := tools.Execute(ctx, call.Name, args)
+        messages = append(messages, ToolResult(call.ID, result))
+    }
+    saveCheckpoint(messages)
+}
+return "turn budget exhausted"
+```
+
+All four frameworks replace substantial parts of this loop. None makes your
+authorization rules, tool idempotency, storage choices, or failure semantics
+disappear. A model's proposed action and permission to execute it remain separate.
+
+## 3. Read each framework through its building blocks
+
+The following Python blocks are excerpts, not standalone programs. They omit
+imports, client configuration, logging, and error checks. The linked `main.py`
+files contain the complete executable versions.
+
+### CrewAI: describe roles and assigned work
+
+**Building blocks:** Agent, Task, Crew, Process, Tool. The lab's researcher has
+the tool; its writer consumes the research result. A task is an assigned work item;
+an agent is the role that performs it. The crew coordinates both.
+
+```python
+researcher = Agent(role="Researcher", goal="Fetch weather",
+                   backstory="Use tools", tools=[get_weather], llm=llm)
+writer = Agent(role="Writer", goal="Explain weather",
+               backstory="Write concisely", llm=llm)
+research = Task(description="Call get_weather for Shanghai",
+                expected_output="Mock weather facts", agent=researcher)
+write = Task(description="Explain those facts",
+             expected_output="One sentence", agent=writer, context=[research])
+result = Crew(agents=[researcher, writer], tasks=[research, write],
+              process=Process.sequential).kickoff()
+```
+
+Read [crewai/main.py](crewai/main.py). Locate the extra orchestration layer:
+research task first, writing task second, with an internal model/tool loop for
+the researcher. Role descriptions are prompts, not Go interface implementations.
+Splitting this tiny task into two agents is a teaching choice and adds model work.
+See the official [quickstart](https://docs.crewai.com/en/quickstart).
+
+### AutoGen AgentChat: work in conversations and teams
+
+**Building blocks:** AssistantAgent, model client, messages, TaskResult, and
+optionally Team plus termination conditions. The lab uses one assistant, so
+there is no separate team scheduler.
+
+```python
+agent = AssistantAgent(
+    name="weather_assistant", model_client=client, tools=[get_weather],
+    system_message="Call get_weather, then answer in English.",
+    reflect_on_tool_use=True, max_tool_iterations=2,
+)
+result = await agent.run(task=question)
+print(result.messages[-1].content)
+```
+
+Read [autogen/main.py](autogen/main.py). `reflect_on_tool_use=True` requests a
+model-written answer after tool use. A final text response ends this assistant
+run; the tool-round bound limits repeated dispatch. With multiple agents, a Team
+adds participant scheduling and its own termination rules. Do not confuse
+`agent.run(task=...)` with a CrewAI Task object. See the official
+[AgentChat quickstart](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/quickstart.html).
+
+### Pydantic AI: make inputs and outputs typed contracts
+
+**Building blocks:** Agent, typed function tool, Pydantic output model, model/provider,
+and usage limits. Optional dependencies use `RunContext[Deps]`; this lab instead
+demonstrates a structured final result.
+
+```python
+class WeatherAnswer(BaseModel):
+    city: str
+    answer: str
+    is_mock: bool
+
+agent = Agent(model, output_type=WeatherAnswer)
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f"{city}: sunny, 22 C (mock data)."
+
+result = agent.run_sync(question, usage_limits=UsageLimits(request_limit=6))
+print(result.output.answer)
+```
+
+Read [pydantic_ai/main.py](pydantic_ai/main.py). Function annotations describe tool
+arguments; `WeatherAnswer` describes the validated final object. Pydantic checks
+shape and constraints, not whether a claim is true or an action is authorized.
+This run uses an output tool to obtain structured data, which is distinct from
+the business tool that retrieves weather. See the official
+[tools](https://ai.pydantic.dev/tools/) and [output](https://ai.pydantic.dev/output/) guides.
+
+The live DeepSeek test exposed a useful integration boundary: its thinking mode
+rejects required/named tool choice. This demo disables thinking for DeepSeek and
+disables server-side strict tool definitions while retaining local validation.
+That is a provider setting, not a different agent architecture. See the
+[DeepSeek API reference](https://api-docs.deepseek.com/api/create-chat-completion/).
+
+### OpenAI Agents SDK: compose an agent around Runner
+
+**Building blocks:** Agent, Runner, function tool, session, guardrail, and optional
+handoff. The SDK package can use an OpenAI-compatible Chat Completions model;
+using this SDK does not require using an OpenAI-hosted model in this lab.
+
+```python
+agent = Agent(
+    name="Weather assistant", model=model,
+    tools=[get_weather], input_guardrails=[short_input],
+)
+session = SQLiteSession("weather-lab", ":memory:")
+result = await Runner.run(agent, question, session=session, max_turns=6)
+print(result.final_output)
+```
+
+Read [openai_agents/main.py](openai_agents/main.py). Runner owns execution; Agent
+is its configuration. The input guardrail rejects empty/oversized messages before
+model execution. Session stores conversation items. A handoff changes the active
+agent, its instructions, and tools; it is different from calling a helper and
+returning control to a manager. See the official
+[runtime guide](https://developers.openai.com/api/docs/guides/agents/running-agents).
+
+Try persistence with the commands in [the project README](openai_agents/README.md).
+An in-memory SQLite session disappears when the process exits. A file-backed
+session preserves history, but is not by itself a durable tool-execution checkpoint.
+
+## 4. Self-check answers
+
+### Question 1: How do abstraction levels differ, and which JDs/scenarios fit?
+
+This ranking is an interpretation of the APIs used here, not a universal
+benchmark. Compare the surface you actually adopt: a single AutoGen assistant is
+simpler than an AutoGen team, and CrewAI Flows offer a different orchestration style.
+
+| Framework | Relative level in this lab | Main organizing idea | Example JD / scenario fit |
+| --- | --- | --- | --- |
+| CrewAI | High | Roles, tasks, and coordinated crews | Workflow automation or AI solutions roles; staged research/report pipelines |
+| AutoGen AgentChat | Medium for one assistant; higher with teams | Conversations, participants, and termination | Agent orchestration or multi-agent research roles; collaborative problem-solving experiments |
+| Pydantic AI | Medium, close to application code | Typed tools, dependencies, and validated results | Python backend or applied AI roles; schema-driven extraction and business integrations |
+| OpenAI Agents SDK | Medium, focused runtime primitives | Runner, tools, handoffs, sessions, guardrails | Agent platform or product integration roles; assistants needing routing and policy attachment points |
+
+If a JD emphasizes Python schemas and service dependencies, inspect Pydantic AI
+first. If it emphasizes multi-agent coordination, inspect AutoGen teams or CrewAI
+tasks. If it emphasizes assistant runtime composition, inspect Runner and handoffs.
+These are engineering-fit examples, not claims about current hiring demand.
+
+### Question 2: What do they save or hide versus a Go harness?
+
+| Framework | Loop: saves / hides | State: saves / hides | Permissions: saves / hides | HITL: saves / hides |
+| --- | --- | --- | --- | --- |
+| CrewAI | Schedules tasks and internal tool loops / prompts, intermediate work, and retry details become less visible | Passes task context / what is carried forward depends on task and memory configuration | Provides tools and validation hooks / roles and task guardrails do not enforce resource authorization | Offers task review points / review of a task result is different from approval before each side effect |
+| AutoGen | Dispatches tools, reflection, and optional team turns / participant scheduling and termination need inspection | Maintains agent messages and exposes state serialization / you must decide what to save and when | Tool registration defines available actions / a registered tool still needs identity and argument policy | Offers human participants and pause patterns / waiting inside a running agent is not automatically durable |
+| Pydantic AI | Executes tools and validates/retries output / graph transitions and validation can add requests | Exposes message history and typed dependencies / dependency objects are not automatically persisted | Validates argument/output shape / valid data can still describe a forbidden action | Supports deferred approval requests/results / the app still stores pending work and routes human decisions |
+| Agents SDK | Runner handles tools and handoffs / a turn can contain more than one tool action | Session handles conversation history / history storage differs from resumable execution state | Provides input/output/tool guardrail attachment points / policy and OS/network enforcement remain external | Supports approval interruptions and resumable state / the app owns approver identity, storage, and resume delivery |
+
+The permission column distinguishes validation from authorization. A string field
+containing a city is a contract. Deciding which customer may invoke a billing tool
+is an authorization rule. A prompt saying “ask permission” is not enforcement.
+
+The lab only executes a tiny input guardrail and a harmless weather tool. The
+following are framework capabilities to explore next, not features implemented
+in all four demos:
+
+- **CrewAI:** task human review via `human_input=True`. Review timing matters;
+  completed-task review is not automatically a pre-tool approval.
+  [Human input guide](https://docs.crewai.com/en/learn/human-input-on-execution).
+- **AutoGen:** `UserProxyAgent` for feedback during a run, or stop and accept
+  feedback in a later run. [HITL tutorial](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/human-in-the-loop.html).
+- **Pydantic AI:** deferred tools and approval results separate proposed work
+  from approved execution. [Deferred tools guide](https://ai.pydantic.dev/deferred-tools/).
+- **Agents SDK:** a function tool can require approval, returning interruptions;
+  approve/reject through run state and resume. [Guardrails and approvals](https://developers.openai.com/api/docs/guides/agents/guardrails-approvals).
+
+#### Persistence and checkpoints need separate questions
+
+Ask what happens if the process dies after a tool charges a card but before its
+result is saved. Replaying conversation history could charge again. You need a
+stable operation ID, an idempotent tool boundary, and a record of completed work.
+Neither a SQLite history file nor a JSON message dump guarantees exactly-once
+side effects. Inspect the framework's durable execution integration before relying
+on it; otherwise keep that coordination in your service or workflow engine.
+
+### Question 3: When should you keep a handwritten harness?
+
+Keep your Go harness when its explicit control is valuable enough to justify
+maintaining it. Strong reasons include:
+
+1. **Existing service integration:** Go identity, middleware, cancellation,
+   deployment, and observability already form the right execution environment.
+2. **Strict action policy:** every tool must pass your authorization and approval
+   system with an auditable order of checks and side effects.
+3. **Durable execution requirements:** you need to own checkpoints, replay,
+   idempotency, compensation, and recovery across human delays or process crashes.
+4. **A small stable workflow:** one model and a few tools need little orchestration;
+   a framework migration would add more dependency/API surface than it removes.
+5. **Precise protocol or performance control:** you need custom transports, budgets,
+   concurrency, or provider behavior that the framework's defaults obscure.
+
+A framework is useful when repeated orchestration, validation, coordination, or
+session handling is consuming more engineering effort than the abstraction costs.
+You can also adopt only part of one: typed output validation does not require
+outsourcing your entire policy or persistence layer. Decide by tracing the actual
+failure and recovery paths, not by counting how few lines the happy path uses.
+
+## 5. Experiments to make the distinctions concrete
+
+1. Run every demo for a second city and trace the same four log markers.
+2. In CrewAI, identify exactly which task result the writer sees.
+3. In AutoGen, compare final reflection with returning the raw tool summary.
+4. In Pydantic AI, add an output field and inspect the contract and validation.
+5. In Agents SDK, persist two turns; then send a message longer than 500 characters
+   and observe that the blocking guardrail prevents a tool call.
+6. For each framework, sketch how you would approve a side effect and recover
+   after a crash. Fill [COMPARISON.md](COMPARISON.md) in your own words.
+
+The worksheet intentionally stays blank even though this guide supplies answers.
+The learning objective is to connect those answers to concrete execution behavior.

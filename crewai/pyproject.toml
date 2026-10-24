@@ -1,0 +1,8 @@
+[project]
+name = "lab-crewai"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "crewai>=1.15.30",
+    "python-dotenv>=1.2.4",
+]

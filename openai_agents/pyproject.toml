@@ -1,0 +1,8 @@
+[project]
+name = "lab-openai-agents"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "openai-agents>=0.24.0",
+    "python-dotenv>=1.2.4",
+]
